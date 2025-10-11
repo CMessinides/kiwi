@@ -1,0 +1,3 @@
+```@kwql
+type == "recipe" and meta.total_time < 60m
+```

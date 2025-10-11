@@ -17,6 +17,7 @@ const (
 	BlockHeading
 	BlockParagraph
 	BlockVerbatim
+	BlockMacro
 )
 
 // String implements the [fmt.Stringer] interface.
@@ -30,6 +31,8 @@ func (b Block) String() string {
 		return "paragraph"
 	case BlockVerbatim:
 		return "verbatim"
+	case BlockMacro:
+		return "macro"
 	default:
 		return "unknown"
 	}
@@ -39,7 +42,7 @@ var (
 	reNonBlankLine  = regexp.MustCompile(`^\s*(\S|\S.*\S)\s*$`)
 	reHeadingPrefix = regexp.MustCompile(`^\s*(#{1,6})\s`)
 	// /x60 = literal backtick
-	reVerbatimOpener = regexp.MustCompile(`^\s*(\x60{3,})(\w*)\s*$`)
+	reRawOpener = regexp.MustCompile(`^\s*(\x60{3,})(@\w+|\w*)\s*$`)
 )
 
 func findText(line []byte) []byte {
@@ -81,11 +84,19 @@ func newHeading(level int, rest []byte) *ast.Node[Block] {
 	return h
 }
 
-func tryOpenVerbatim(line []byte) (verbatim *ast.Node[Block], delim string) {
-	if m := reVerbatimOpener.FindSubmatch(line); m != nil {
+// tryOpenRaw checks if the line opens one of the two raw blocks (verbatim or
+// macro). If it does, it returns the new node, along with the `delim` string
+// that will close it. Otherwise, it returns nil and an empty string.
+func tryOpenRaw(line []byte) (verbatim *ast.Node[Block], delim string) {
+	if m := reRawOpener.FindSubmatch(line); m != nil {
 		delim := string(m[1])
-		lang := string(m[2])
-		return ast.NewNode(BlockVerbatim).SetAttr("lang", lang), delim
+		tag := string(m[2])
+		if len(tag) > 0 && tag[0] == '@' {
+			// Tags that start with '=' indicate macros.
+			return ast.NewNode(BlockMacro).SetAttr("tag", tag[1:]), delim
+		} else {
+			return ast.NewNode(BlockVerbatim).SetAttr("lang", tag), delim
+		}
 	} else {
 		return nil, ""
 	}
@@ -109,13 +120,14 @@ func (p *paragraphState) pushLine(line []byte) (next blockState) {
 	}
 }
 
-type verbatimState struct {
+// rawState handles parsing within a raw block (verbatim or macro).
+type rawState struct {
 	parent blockState
 	node   *ast.Node[Block]
 	delim  *regexp.Regexp
 }
 
-func (v *verbatimState) pushLine(line []byte) (next blockState) {
+func (v *rawState) pushLine(line []byte) (next blockState) {
 	if v.delim.Match(line) {
 		return v.parent
 	} else {
@@ -129,12 +141,12 @@ type documentState struct {
 }
 
 func (d *documentState) pushLine(line []byte) blockState {
-	if v, delim := tryOpenVerbatim(line); v != nil {
-		d.doc.Append(v)
+	if r, delim := tryOpenRaw(line); r != nil {
+		d.doc.Append(r)
 
-		return &verbatimState{
+		return &rawState{
 			parent: d,
-			node:   v,
+			node:   r,
 			delim:  regexp.MustCompile(`^\s*` + delim + `\s*$`),
 		}
 	}
