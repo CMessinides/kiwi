@@ -16,6 +16,7 @@ const (
 	BlockDocument
 	BlockHeading
 	BlockParagraph
+	BlockVerbatim
 )
 
 // String implements the [fmt.Stringer] interface.
@@ -27,6 +28,8 @@ func (b Block) String() string {
 		return "heading"
 	case BlockParagraph:
 		return "paragraph"
+	case BlockVerbatim:
+		return "verbatim"
 	default:
 		return "unknown"
 	}
@@ -35,6 +38,8 @@ func (b Block) String() string {
 var (
 	reNonBlankLine  = regexp.MustCompile(`^\s*(\S|\S.*\S)\s*$`)
 	reHeadingPrefix = regexp.MustCompile(`^\s*(#{1,6})\s`)
+	// /x60 = literal backtick
+	reVerbatimOpener = regexp.MustCompile(`^\s*(\x60{3,})(\w*)\s*$`)
 )
 
 func findText(line []byte) []byte {
@@ -76,6 +81,16 @@ func newHeading(level int, rest []byte) *ast.Node[Block] {
 	return h
 }
 
+func tryOpenVerbatim(line []byte) (verbatim *ast.Node[Block], delim string) {
+	if m := reVerbatimOpener.FindSubmatch(line); m != nil {
+		delim := string(m[1])
+		lang := string(m[2])
+		return ast.NewNode(BlockVerbatim).SetAttr("lang", lang), delim
+	} else {
+		return nil, ""
+	}
+}
+
 type blockState interface {
 	pushLine(line []byte) (next blockState)
 }
@@ -94,11 +109,36 @@ func (p *paragraphState) pushLine(line []byte) (next blockState) {
 	}
 }
 
+type verbatimState struct {
+	parent blockState
+	node   *ast.Node[Block]
+	delim  *regexp.Regexp
+}
+
+func (v *verbatimState) pushLine(line []byte) (next blockState) {
+	if v.delim.Match(line) {
+		return v.parent
+	} else {
+		appendLine(v.node, line)
+		return v
+	}
+}
+
 type documentState struct {
 	doc *ast.Node[Block]
 }
 
 func (d *documentState) pushLine(line []byte) blockState {
+	if v, delim := tryOpenVerbatim(line); v != nil {
+		d.doc.Append(v)
+
+		return &verbatimState{
+			parent: d,
+			node:   v,
+			delim:  regexp.MustCompile(`^\s*` + delim + `\s*$`),
+		}
+	}
+
 	if idxs := reHeadingPrefix.FindSubmatchIndex(line); idxs != nil {
 		level := idxs[3] - idxs[2]
 		rest := line[idxs[1]:]

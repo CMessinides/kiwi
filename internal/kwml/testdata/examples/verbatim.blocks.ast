@@ -1,0 +1,3 @@
+(document
+	(verbatim lang="" content="without language tag")
+	(verbatim lang="kwml" content="# Example KWML document\n\nThis will _not_ be parsed as KWML,\nbecause it's in a verbatim block.\n\n   Whitespace is preserved, too."))

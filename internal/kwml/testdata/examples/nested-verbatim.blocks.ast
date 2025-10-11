@@ -1,0 +1,2 @@
+(document
+	(verbatim lang="markdown" content="This markdown block contains a code block\n\n```\ncode within markdown\n```\n\nIt doesn't break the verbatim block because the delimiter is shorter."))

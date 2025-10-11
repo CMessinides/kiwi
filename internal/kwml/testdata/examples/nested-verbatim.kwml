@@ -1,0 +1,9 @@
+````markdown
+This markdown block contains a code block
+
+```
+code within markdown
+```
+
+It doesn't break the verbatim block because the delimiter is shorter.
+````

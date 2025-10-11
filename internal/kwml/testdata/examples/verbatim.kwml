@@ -1,0 +1,12 @@
+```
+without language tag
+```
+
+```kwml
+# Example KWML document
+
+This will _not_ be parsed as KWML,
+because it's in a verbatim block.
+
+   Whitespace is preserved, too.
+```
