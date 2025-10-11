@@ -22,6 +22,24 @@ func (n *Node[T]) Children() []*Node[T] {
 	return n.children
 }
 
+// FirstChild returns the node's first child, or nil if it has no children.
+func (n *Node[T]) FirstChild() *Node[T] {
+	if len(n.children) == 0 {
+		return nil
+	}
+
+	return n.children[0]
+}
+
+// LastChild returns the node's last child, or nil if it has no children.
+func (n *Node[T]) LastChild() *Node[T] {
+	if len(n.children) == 0 {
+		return nil
+	}
+
+	return n.children[len(n.children)-1]
+}
+
 // Append adds the given `nodes` as children to this node and
 // returns it.
 func (n *Node[T]) Append(nodes ...*Node[T]) *Node[T] {
@@ -73,6 +91,11 @@ func (n *Node[T]) Attrs() *AttributeMap {
 // return value will be false if the attribute does not exist.
 func (n *Node[T]) Attr(key string) (value any, ok bool) {
 	return n.attrs.Get(key)
+}
+
+// HasAttr returns whether the node has attribute `key`.
+func (n *Node[T]) HasAttr(key string) bool {
+	return n.attrs.Has(key)
 }
 
 // SetAttr sets the attribute associated with `key` to `value`.

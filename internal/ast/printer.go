@@ -3,8 +3,27 @@ package ast
 import (
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 )
+
+type (
+	AttrStringerMap map[string]func(value any) fmt.Stringer
+)
+
+type DefaultAttrStringer struct {
+	Value any
+}
+
+func (d DefaultAttrStringer) String() string {
+	return fmt.Sprintf("%#v", d.Value)
+}
+
+type AttrStringerFunc func() string
+
+func (a AttrStringerFunc) String() string {
+	return a()
+}
 
 // Printer wraps an [io.Writer] to pretty-print [Node]s to it.
 type Printer[T comparable] struct {
@@ -12,6 +31,7 @@ type Printer[T comparable] struct {
 	depth       int
 	indentChars string
 	includeKeys bool
+	stringers   AttrStringerMap
 }
 
 // Print pretty-prints the `node` to the printer's [io.Writer]. It returns the
@@ -73,10 +93,15 @@ func (p *Printer[T]) printAttrs(attrs *AttributeMap) error {
 	var err error
 
 	for k, v := range attrs.Entries() {
+		var s fmt.Stringer = DefaultAttrStringer{v}
+		if f, ok := p.stringers[k]; ok {
+			s = f(v)
+		}
+
 		if p.includeKeys {
-			_, err = fmt.Fprintf(p.w, " %s=%#v", k, v)
+			_, err = fmt.Fprint(p.w, " ", k, "=", s)
 		} else {
-			_, err = fmt.Fprintf(p.w, " %#v", v)
+			_, err = fmt.Fprint(p.w, " ", s)
 		}
 
 		if err != nil {
@@ -89,6 +114,7 @@ func (p *Printer[T]) printAttrs(attrs *AttributeMap) error {
 
 // PrinterOptions provides configuration for a [Printer].
 type PrinterOptions struct {
+	AttrStringers AttrStringerMap
 	// Characters to use for indentation (defaults to "\t").
 	IndentChars string
 	// Whether to print attribute keys.
@@ -97,7 +123,15 @@ type PrinterOptions struct {
 
 // NewPrinter creates a new [Printer] that wraps the given [io.Writer].
 func NewPrinter[T comparable](w io.Writer, opts *PrinterOptions) *Printer[T] {
-	p := &Printer[T]{w: w, indentChars: "\t"}
+	p := &Printer[T]{
+		w:           w,
+		indentChars: "\t",
+		stringers:   make(AttrStringerMap),
+	}
+
+	if opts.AttrStringers != nil {
+		maps.Copy(p.stringers, opts.AttrStringers)
+	}
 
 	if opts.IndentChars != "" {
 		p.indentChars = opts.IndentChars

@@ -29,6 +29,12 @@ func (a *AttributeMap) Get(key string) (value any, ok bool) {
 	}
 }
 
+// Has returns whether the map contains an attribute with the given key.
+func (a *AttributeMap) Has(key string) bool {
+	_, found := a.Get(key)
+	return found
+}
+
 // Set updates or inserts an attribute with the given key, and sets it to the
 // given value. It returns the modified [AttributeMap].
 func (a *AttributeMap) Set(key string, value any) *AttributeMap {
@@ -51,7 +57,7 @@ func (a *AttributeMap) Delete(key string) bool {
 		return false
 	}
 
-	a.attrs = slices.Delete(a.attrs, i, i+i)
+	a.attrs = slices.Delete(a.attrs, i, i+1)
 	return true
 }
 

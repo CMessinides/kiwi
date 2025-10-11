@@ -1,0 +1,3 @@
+(document
+	(paragraph content="This is my first paragraph.")
+	(paragraph content="This is my\nsecond paragraph."))

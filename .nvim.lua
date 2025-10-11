@@ -1,6 +1,7 @@
 vim.filetype.add({
 	extension = {
 		ast = "astsexp",
+		kwml = "kwml",
 		tmpl = "gotmpl",
 	},
 })

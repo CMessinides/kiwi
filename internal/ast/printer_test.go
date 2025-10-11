@@ -1,6 +1,7 @@
 package ast_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -56,6 +57,26 @@ var printerTests = []struct {
 		o(
 			"(document \"en-US\"",
 			"\t(heading 1 \"title\"))",
+		),
+	},
+	{
+		"attribute-formatters",
+		&ast.PrinterOptions{
+			AttrStringers: ast.AttrStringerMap{
+				"lang": func(value any) fmt.Stringer {
+					if s, ok := value.(string); ok {
+						value = strings.ToLower(s)
+					}
+
+					return ast.DefaultAttrStringer{value}
+				},
+			},
+		},
+		ast.NewNode("document").
+			SetAttr("title", "should not change").
+			SetAttr("lang", "en-US"),
+		o(
+			"(document \"should not change\" \"en-us\")",
 		),
 	},
 	{
