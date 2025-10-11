@@ -1,5 +1,5 @@
-// Package ast provides generic data structures abstract syntax trees (ASTs),
-// as well as functions for working with them.
+// Package ast provides generic data structures for abstract syntax trees
+// (ASTs), as well as functions for working with them.
 package ast
 
 import "slices"
