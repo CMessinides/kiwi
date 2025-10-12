@@ -1,0 +1,8 @@
+(document
+	(ordered_list
+		(list_item
+			(paragraph content="Step 1"))
+		(list_item
+			(paragraph content="Step 2"))
+		(list_item
+			(paragraph content="Step 3"))))

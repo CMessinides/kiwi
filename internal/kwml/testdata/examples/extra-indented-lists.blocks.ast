@@ -1,0 +1,8 @@
+(document
+	(paragraph content="Opening paragraph here")
+	(unordered_list
+		(list_item
+			(paragraph content="Indented item 1"))
+		(list_item
+			(paragraph content="Indented item 2")))
+	(paragraph content="this is a new paragraph bc it doesn't match the item indentation"))

@@ -1,0 +1,8 @@
+(document
+	(unordered_list
+		(list_item
+			(paragraph content="Eggs"))
+		(list_item
+			(paragraph content="Milk (almond)"))
+		(list_item
+			(paragraph content="Flour"))))

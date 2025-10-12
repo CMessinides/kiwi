@@ -1,0 +1,12 @@
+(document
+	(unordered_list
+		(list_item
+			(paragraph content="Unordered 1"))
+		(list_item
+			(paragraph content="Unordered 2")))
+	(ordered_list
+		(list_item
+			(paragraph content="Ordered 1 (starts a new list)")))
+	(unordered_list
+		(list_item
+			(paragraph content="Unordered 3 (starts a third list)"))))

@@ -2,6 +2,7 @@ package kwml
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"regexp"
 	"slices"
@@ -20,6 +21,9 @@ const (
 	BlockVerbatim
 	BlockMacro
 	BlockBlockquote
+	BlockOrderedList
+	BlockUnorderedList
+	BlockListItem
 )
 
 // String implements the [fmt.Stringer] interface.
@@ -37,17 +41,26 @@ func (b Block) String() string {
 		return "macro"
 	case BlockBlockquote:
 		return "blockquote"
+	case BlockOrderedList:
+		return "ordered_list"
+	case BlockUnorderedList:
+		return "unordered_list"
+	case BlockListItem:
+		return "list_item"
 	default:
 		return "unknown"
 	}
 }
 
 var (
+	reBlankLine     = regexp.MustCompile(`^\s*$`)
 	reNonBlankLine  = regexp.MustCompile(`^\s*(\S|\S.*\S)\s*$`)
 	reHeadingPrefix = regexp.MustCompile(`^\s*(#{1,6})\s`)
 	// /x60 = literal backtick
-	reRawOpener        = regexp.MustCompile(`^\s*(\x60{3,})(@\w+|\w*)\s*$`)
-	reBlockquoteOpener = regexp.MustCompile(`^\s*("{3,})\s*$`)
+	reRawOpener              = regexp.MustCompile(`^\s*(\x60{3,})(@\w+|\w*)\s*$`)
+	reBlockquoteOpener       = regexp.MustCompile(`^\s*("{3,})\s*$`)
+	reOrderedListItemPrefix  = regexp.MustCompile(`^\s*\+\s`)
+	reUnorderdListItemPrefix = regexp.MustCompile(`^\s*-\s`)
 )
 
 // findText returns all the characters between the first non-whitespace and
@@ -153,6 +166,19 @@ func tryOpenBlockquote(line []byte) (blockquote *ast.Node[Block], delim string) 
 	return nil, ""
 }
 
+// tryOpenList tests if the line opens a list. If it does, it returns the new
+// node, and the offset of the list, which is the number of spaces that
+// following lines must be indented to be included in the list.
+func tryOpenList(line []byte) (list *ast.Node[Block], offset int) {
+	if idxs := reUnorderdListItemPrefix.FindIndex(line); idxs != nil {
+		return ast.NewNode(BlockUnorderedList), idxs[1]
+	} else if idxs := reOrderedListItemPrefix.FindIndex(line); idxs != nil {
+		return ast.NewNode(BlockOrderedList), idxs[1]
+	} else {
+		return nil, 0
+	}
+}
+
 // blockState represents a possible state that the [BlockParser] can be in.
 // The parser functions as a state machine: it pushes each line to the current
 // state, which returns the next state. This process repeats until there are
@@ -175,6 +201,88 @@ func (p *paragraphState) pushLine(line []byte) (next blockState) {
 		return p
 	} else {
 		return p.parent
+	}
+}
+
+// listState handles parsing within an ordered or unordered list.
+type listState struct {
+	parent          blockState
+	list            *ast.Node[Block]
+	offset          int
+	itemStartPrefix *regexp.Regexp
+}
+
+// pushLine implements the [blockState] interface. It accepts lines as long as
+// they parse as line items for the current list type (ordered or unordered).
+// Once a line doesn't match the current list, it defers to the parent state
+// instead.
+func (l *listState) pushLine(line []byte) blockState {
+	if idxs := l.itemStartPrefix.FindIndex(line); idxs != nil {
+		// Start a new list item.
+		item := ast.NewNode(BlockListItem)
+		l.list.Append(item)
+
+		return newListItemState(l, item, idxs[1], line)
+	}
+
+	// If we reach this point, the current line is not part of the list, so we
+	// let the parent state handle it instead.
+	return l.parent.pushLine(line)
+}
+
+// newListState creates a new [listState].
+func newListState(parent blockState, list *ast.Node[Block], offset int) *listState {
+	marker := "-"
+	if list.Type == BlockOrderedList {
+		marker = `\+`
+	}
+
+	return &listState{
+		parent:          parent,
+		list:            list,
+		offset:          offset,
+		itemStartPrefix: regexp.MustCompile(fmt.Sprintf(`^ {%d}%s\s`, offset-2, marker)),
+	}
+}
+
+// listItemState handles parsing within a list item.
+type listItemState struct {
+	parent blockState
+	sub    blockState
+	prefix *regexp.Regexp
+}
+
+// pushLine implements the [blockState] interface. It accepts lines that are
+// indented at least as many spaces as the list item itself. If the line
+// doesn't match, it pushes the line to its parent instead.
+func (li *listItemState) pushLine(line []byte) blockState {
+	if reBlankLine.Match(line) {
+		li.sub = li.sub.pushLine(line)
+		return li
+	} else if idxs := li.prefix.FindIndex(line); idxs != nil {
+		rest := line[idxs[1]:]
+		li.sub = li.sub.pushLine(rest)
+		return li
+	} else {
+		return li.parent.pushLine(line)
+	}
+}
+
+// newListItemState returns a new [listItemState].
+func newListItemState(
+	parent blockState,
+	item *ast.Node[Block],
+	offset int,
+	line []byte,
+) *listItemState {
+	c := &containerState{
+		container: item,
+	}
+
+	return &listItemState{
+		parent: parent,
+		sub:    c.pushLine(line[offset:]),
+		prefix: regexp.MustCompile(fmt.Sprintf(`^ {%d}`, offset)),
 	}
 }
 
@@ -225,6 +333,14 @@ func (c *containerState) pushLine(line []byte) blockState {
 		c.container.Append(h)
 		// Headings cannot be multi-line; return the current state.
 		return c
+	}
+
+	if l, offset := tryOpenList(line); l != nil {
+		c.container.Append(l)
+		listState := newListState(c, l, offset)
+
+		// Process the current line as part of the list.
+		return listState.pushLine(line)
 	}
 
 	if p := tryOpenParagraph(line); p != nil {

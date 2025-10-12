@@ -1,0 +1,25 @@
+(document
+	(ordered_list
+		(list_item
+			(paragraph content="Preheat the oven to 350 degrees"))
+		(list_item
+			(paragraph content="Chop the fillings")
+			(unordered_list
+				(list_item
+					(paragraph content="Some options include:")
+					(unordered_list
+						(list_item
+							(paragraph content="Bell peppers"))
+						(list_item
+							(paragraph content="Mushrooms"))
+						(list_item
+							(paragraph content="Spinach"))))
+				(list_item
+					(paragraph content="(Optional) Dice ham if using"))))
+		(list_item
+			(paragraph content="Cook the eggs")
+			(unordered_list
+				(list_item
+					(paragraph content="Use quail eggs if you can find them"))
+				(list_item
+					(paragraph content="Use medium-low heat for best results"))))))
