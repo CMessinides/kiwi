@@ -19,6 +19,7 @@ const (
 	BlockParagraph
 	BlockVerbatim
 	BlockMacro
+	BlockBlockquote
 )
 
 // String implements the [fmt.Stringer] interface.
@@ -34,6 +35,8 @@ func (b Block) String() string {
 		return "verbatim"
 	case BlockMacro:
 		return "macro"
+	case BlockBlockquote:
+		return "blockquote"
 	default:
 		return "unknown"
 	}
@@ -43,7 +46,8 @@ var (
 	reNonBlankLine  = regexp.MustCompile(`^\s*(\S|\S.*\S)\s*$`)
 	reHeadingPrefix = regexp.MustCompile(`^\s*(#{1,6})\s`)
 	// /x60 = literal backtick
-	reRawOpener = regexp.MustCompile(`^\s*(\x60{3,})(@\w+|\w*)\s*$`)
+	reRawOpener        = regexp.MustCompile(`^\s*(\x60{3,})(@\w+|\w*)\s*$`)
+	reBlockquoteOpener = regexp.MustCompile(`^\s*("{3,})\s*$`)
 )
 
 // findText returns all the characters between the first non-whitespace and
@@ -68,13 +72,15 @@ func findText(line []byte) []byte {
 // copies the data from the given slice into a new one, and sets the block's
 // content to the new slice.
 func appendLine(block *ast.Node[Block], line []byte) {
-	existing, _ := block.Attr("content")
+	c, _ := block.Attr("content")
 
-	if b, ok := existing.([]byte); ok {
-		c := append(b, '\n')
-		c = append(c, line...)
+	if curr, ok := c.([]byte); ok {
+		if len(curr) > 0 {
+			curr = append(curr, '\n')
+		}
+		curr = append(curr, line...)
 
-		block.SetAttr("content", c)
+		block.SetAttr("content", curr)
 	} else {
 		block.SetAttr("content", slices.Clone(line))
 	}
@@ -99,7 +105,9 @@ func tryOpenHeading(line []byte) *ast.Node[Block] {
 		level := idxs[3] - idxs[2] // == length of the leading "#"s
 		rest := line[idxs[1]:]     // == text after the leading "#"s
 
-		h := ast.NewNode(BlockHeading).SetAttr("level", level)
+		h := ast.NewNode(BlockHeading).
+			SetAttr("level", level).
+			SetAttr("content", []byte{})
 		if t := findText(rest); t != nil {
 			appendLine(h, t)
 		}
@@ -119,13 +127,30 @@ func tryOpenRaw(line []byte) (verbatim *ast.Node[Block], delim string) {
 		tag := string(m[2])
 		if len(tag) > 0 && tag[0] == '@' {
 			// Tags that start with '=' indicate macros.
-			return ast.NewNode(BlockMacro).SetAttr("tag", tag[1:]), delim
+			return ast.NewNode(BlockMacro).
+					SetAttr("tag", tag[1:]).
+					SetAttr("content", []byte{}),
+				delim
 		} else {
-			return ast.NewNode(BlockVerbatim).SetAttr("lang", tag), delim
+			return ast.NewNode(BlockVerbatim).
+					SetAttr("lang", tag).
+					SetAttr("content", []byte{}),
+				delim
 		}
 	} else {
 		return nil, ""
 	}
+}
+
+// tryOpenBlockquote tests if the line opens a blockquote. If it does, it
+// returns the new node, along with the `delim` string that will close it.
+func tryOpenBlockquote(line []byte) (blockquote *ast.Node[Block], delim string) {
+	if m := reBlockquoteOpener.FindSubmatch(line); m != nil {
+		delim := string(m[1])
+		return ast.NewNode(BlockBlockquote), delim
+	}
+
+	return nil, ""
 }
 
 // blockState represents a possible state that the [BlockParser] can be in.
@@ -171,42 +196,82 @@ func (v *rawState) pushLine(line []byte) (next blockState) {
 	}
 }
 
-// documentState handles parsing when outside of any block.
-type documentState struct {
-	doc *ast.Node[Block]
+// containerState handles parsing in contexts that can contain multiple blocks,
+// like blockquotes, multi-line list items, or the root document itself.
+type containerState struct {
+	container *ast.Node[Block]
 }
 
 // pushLine implements the [blockState] interface. It tests each line for
-// various patterns to see if it opens a new block. If it doe, it adds the
-// block as a child of the document, and may return a new state to continue
+// various patterns to see if it opens a new block. If it does, it adds the
+// block as a child of the container, and may return a new state to continue
 // that block, or return itself to move on to the next block.
-func (d *documentState) pushLine(line []byte) blockState {
+func (c *containerState) pushLine(line []byte) blockState {
 	if r, delim := tryOpenRaw(line); r != nil {
-		d.doc.Append(r)
+		c.container.Append(r)
 		return &rawState{
-			parent: d,
+			parent: c,
 			node:   r,
 			delim:  regexp.MustCompile(`^\s*` + delim + `\s*$`),
 		}
 	}
 
+	if b, delim := tryOpenBlockquote(line); b != nil {
+		c.container.Append(b)
+		return newDelimitedContainerState(c, b, delim)
+	}
+
 	if h := tryOpenHeading(line); h != nil {
-		d.doc.Append(h)
+		c.container.Append(h)
 		// Headings cannot be multi-line; return the current state.
-		return d
+		return c
 	}
 
 	if p := tryOpenParagraph(line); p != nil {
-		d.doc.Append(p)
+		c.container.Append(p)
 		return &paragraphState{
-			parent: d,
+			parent: c,
 			para:   p,
 		}
 	}
 
 	// At this point, the line must be blank; return the current state to keep
 	// seeking for the next block.
-	return d
+	return c
+}
+
+// delimitedContainerState handles parsing within a block that can contain
+// multiple other blocks (see [containerState]) and stops parsing when it
+// encounters a line that matches its delimiter pattern.
+type delimitedContainerState struct {
+	parent blockState
+	sub    blockState
+	delim  *regexp.Regexp
+}
+
+// pushLine implements the [blockState] interface. It functions like a
+// [containerState] until it reaches a line that matches its delimiter
+// pattern. Once it does, it returns to its parent state.
+func (d *delimitedContainerState) pushLine(line []byte) blockState {
+	if d.delim.Match(line) {
+		return d.parent
+	} else {
+		d.sub = d.sub.pushLine(line)
+		return d
+	}
+}
+
+// newDelimitedContainerState returns a [delimitedContainerState] that adds
+// blocks to the given `container` until it reaches a line that matches
+// `delim`.
+func newDelimitedContainerState(parent blockState, container *ast.Node[Block], delim string) *delimitedContainerState {
+	return &delimitedContainerState{
+		parent: parent,
+		sub: &containerState{
+			container: container,
+		},
+		delim: regexp.MustCompile(`^\s*` + delim + `\s*$`),
+	}
 }
 
 // BlockParser parses the block structure of a KWML source document.
@@ -239,6 +304,6 @@ func NewBlockParser(r io.Reader) *BlockParser {
 	return &BlockParser{
 		scanner:  bufio.NewScanner(r),
 		document: doc,
-		current:  &documentState{doc},
+		current:  &containerState{doc},
 	}
 }

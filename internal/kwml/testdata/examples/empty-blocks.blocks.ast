@@ -1,0 +1,5 @@
+(document
+	(heading level=2 content="")
+	(blockquote)
+	(verbatim lang="" content="")
+	(macro tag="kwql" content=""))

@@ -1,0 +1,8 @@
+(document
+	(blockquote
+		(paragraph content="Single paragraph blockquote"))
+	(blockquote
+		(heading level=2 content="Nested heading")
+		(paragraph content="Multi-line blockquote with\nmultiple child blocks")
+		(verbatim lang="html" content="<div>Example</div>")
+		(paragraph content="One more paragraph")))
