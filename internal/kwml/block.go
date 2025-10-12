@@ -9,6 +9,7 @@ import (
 	"github.com/cmessinides/kiwi/internal/ast"
 )
 
+// Block represents the type of a KWML block.
 type Block int
 
 const (
@@ -45,9 +46,15 @@ var (
 	reRawOpener = regexp.MustCompile(`^\s*(\x60{3,})(@\w+|\w*)\s*$`)
 )
 
+// findText returns all the characters between the first non-whitespace and
+// last non-whitespace character in `line`. If the line is empty, or only
+// contains whitespace, findText returns nil.
 func findText(line []byte) []byte {
-	match := reNonBlankLine.FindSubmatch(line)
-	if match != nil {
+	if len(line) == 0 {
+		return nil
+	}
+
+	if match := reNonBlankLine.FindSubmatch(line); match != nil {
 		// The first submatch is just the text, with leading and trailing
 		// whitespace trimmed.
 		return match[1]
@@ -56,6 +63,10 @@ func findText(line []byte) []byte {
 	}
 }
 
+// appendLine joins the given `line` to the block's `"content"` attribute with
+// a newline character (`\n`). If the block has no existing content, appendLine
+// copies the data from the given slice into a new one, and sets the block's
+// content to the new slice.
 func appendLine(block *ast.Node[Block], line []byte) {
 	existing, _ := block.Attr("content")
 
@@ -69,22 +80,37 @@ func appendLine(block *ast.Node[Block], line []byte) {
 	}
 }
 
-func newParagraph(text []byte) *ast.Node[Block] {
-	p := ast.NewNode(BlockParagraph)
-	appendLine(p, text)
-	return p
-}
-
-func newHeading(level int, rest []byte) *ast.Node[Block] {
-	h := ast.NewNode(BlockHeading).SetAttr("level", level)
-	if t := findText(rest); t != nil {
-		appendLine(h, t)
+// tryOpenParagraph tests if the line opens a paragraph. If it does, it returns
+// the new node.
+func tryOpenParagraph(line []byte) *ast.Node[Block] {
+	if t := findText(line); t != nil {
+		p := ast.NewNode(BlockParagraph)
+		appendLine(p, t)
+		return p
 	}
 
-	return h
+	return nil
 }
 
-// tryOpenRaw checks if the line opens one of the two raw blocks (verbatim or
+// tryOpenHeading tests if the line opens a heading. If it does, it returns the
+// new node.
+func tryOpenHeading(line []byte) *ast.Node[Block] {
+	if idxs := reHeadingPrefix.FindSubmatchIndex(line); idxs != nil {
+		level := idxs[3] - idxs[2] // == length of the leading "#"s
+		rest := line[idxs[1]:]     // == text after the leading "#"s
+
+		h := ast.NewNode(BlockHeading).SetAttr("level", level)
+		if t := findText(rest); t != nil {
+			appendLine(h, t)
+		}
+
+		return h
+	} else {
+		return nil
+	}
+}
+
+// tryOpenRaw tests if the line opens one of the two raw blocks (verbatim or
 // macro). If it does, it returns the new node, along with the `delim` string
 // that will close it. Otherwise, it returns nil and an empty string.
 func tryOpenRaw(line []byte) (verbatim *ast.Node[Block], delim string) {
@@ -102,15 +128,22 @@ func tryOpenRaw(line []byte) (verbatim *ast.Node[Block], delim string) {
 	}
 }
 
+// blockState represents a possible state that the [BlockParser] can be in.
+// The parser functions as a state machine: it pushes each line to the current
+// state, which returns the next state. This process repeats until there are
+// no more lines.
 type blockState interface {
 	pushLine(line []byte) (next blockState)
 }
 
+// paragraphState handles parsing within a paragraph.
 type paragraphState struct {
 	parent blockState
 	para   *ast.Node[Block]
 }
 
+// pushLine accepts any non-blank line. If it encounters a blank line,
+// it returns the parent state.
 func (p *paragraphState) pushLine(line []byte) (next blockState) {
 	if t := findText(line); t != nil {
 		appendLine(p.para, t)
@@ -127,6 +160,8 @@ type rawState struct {
 	delim  *regexp.Regexp
 }
 
+// pushLine implements the [blockState] interface. It accepts lines until
+// it reaches one that matches the delimiter pattern.
 func (v *rawState) pushLine(line []byte) (next blockState) {
 	if v.delim.Match(line) {
 		return v.parent
@@ -136,14 +171,18 @@ func (v *rawState) pushLine(line []byte) (next blockState) {
 	}
 }
 
+// documentState handles parsing when outside of any block.
 type documentState struct {
 	doc *ast.Node[Block]
 }
 
+// pushLine implements the [blockState] interface. It tests each line for
+// various patterns to see if it opens a new block. If it doe, it adds the
+// block as a child of the document, and may return a new state to continue
+// that block, or return itself to move on to the next block.
 func (d *documentState) pushLine(line []byte) blockState {
 	if r, delim := tryOpenRaw(line); r != nil {
 		d.doc.Append(r)
-
 		return &rawState{
 			parent: d,
 			node:   r,
@@ -151,34 +190,35 @@ func (d *documentState) pushLine(line []byte) blockState {
 		}
 	}
 
-	if idxs := reHeadingPrefix.FindSubmatchIndex(line); idxs != nil {
-		level := idxs[3] - idxs[2]
-		rest := line[idxs[1]:]
-
-		d.doc.Append(
-			newHeading(level, rest),
-		)
+	if h := tryOpenHeading(line); h != nil {
+		d.doc.Append(h)
+		// Headings cannot be multi-line; return the current state.
 		return d
 	}
 
-	if t := findText(line); t != nil {
-		p := newParagraph(t)
+	if p := tryOpenParagraph(line); p != nil {
 		d.doc.Append(p)
 		return &paragraphState{
 			parent: d,
 			para:   p,
 		}
-	} else {
-		return d
 	}
+
+	// At this point, the line must be blank; return the current state to keep
+	// seeking for the next block.
+	return d
 }
 
+// BlockParser parses the block structure of a KWML source document.
 type BlockParser struct {
 	scanner  *bufio.Scanner
 	document *ast.Node[Block]
 	current  blockState
 }
 
+// Parse scans lines from the internal scanner to build up a tree of blocks.
+// It returns an error if the scanner encounters one. Otherwise, it returns
+// the parsed document.
 func (b *BlockParser) Parse() (doc *ast.Node[Block], err error) {
 	for b.scanner.Scan() {
 		if err := b.scanner.Err(); err != nil {
@@ -192,6 +232,8 @@ func (b *BlockParser) Parse() (doc *ast.Node[Block], err error) {
 	return b.document, nil
 }
 
+// NewBlockParser returns a new [BlockParser] that will parse from the given
+// [io.Reader].
 func NewBlockParser(r io.Reader) *BlockParser {
 	doc := ast.NewNode(BlockDocument)
 	return &BlockParser{
