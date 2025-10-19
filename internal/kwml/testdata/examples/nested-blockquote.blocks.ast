@@ -1,9 +1,0 @@
-(document
-	(blockquote
-		(paragraph content="start quote 1")
-		(blockquote
-			(paragraph content="start quote 2")
-			(blockquote
-				(paragraph content="quote 3"))
-			(paragraph content="end quote 2"))
-		(paragraph content="end quote 1")))

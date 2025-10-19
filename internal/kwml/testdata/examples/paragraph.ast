@@ -1,0 +1,3 @@
+(document
+	(paragraph
+		(text content="Hello world!")))

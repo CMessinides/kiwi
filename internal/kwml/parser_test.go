@@ -1,18 +1,17 @@
 package kwml_test
 
 import (
-	"fmt"
+	"bytes"
 	"io/fs"
 	"os"
 	"strings"
 	"testing"
 
-	"github.com/cmessinides/kiwi/internal/ast"
 	"github.com/cmessinides/kiwi/internal/kwml"
 	"github.com/cmessinides/kiwi/internal/testfmt"
 )
 
-func TestBlockParser(t *testing.T) {
+func TestParser(t *testing.T) {
 	fixtures := os.DirFS("testdata/examples")
 	inputs, err := fs.Glob(fixtures, "*.kwml")
 	if err != nil {
@@ -29,46 +28,31 @@ func TestBlockParser(t *testing.T) {
 		}
 		defer srcFile.Close()
 
-		output := name + ".blocks.ast"
-		outBytes, err := os.ReadFile("testdata/examples/" + output)
+		output := name + ".ast"
+		expected, err := os.ReadFile("testdata/examples/" + output)
 		if err != nil {
 			t.Errorf("%s: could not read %s: %s", name, output, err)
 			continue
 		}
 
-		b := kwml.NewBlockParser(srcFile)
-		doc, err := b.Parse()
+		doc, err := kwml.Parse(srcFile)
 		if err != nil {
 			t.Errorf("%s: parse failed:\n\n%s", name, err)
 			continue
 		}
 
-		result := new(strings.Builder)
-		printer := ast.NewPrinter[kwml.Block](result, &ast.PrinterOptions{
-			AttrStringers: ast.AttrStringerMap{
-				"content": func(value any) fmt.Stringer {
-					if b, ok := value.([]byte); ok {
-						value = string(b)
-					}
-
-					return ast.DefaultAttrStringer{Value: value}
-				},
-			},
-			IncludeAttrKeys: true,
-		})
-		err = printer.Print(doc)
-		if err != nil {
+		buf := new(bytes.Buffer)
+		if err = kwml.PrintAST(buf, doc); err != nil {
 			t.Errorf("%s: could not print AST: %e", name, err)
 			continue
 		}
 
-		expected := strings.TrimSuffix(string(outBytes), "\n")
-		actual := result.String()
-		if expected != actual {
+		actual := buf.Bytes()
+		if !bytes.Equal(expected, actual) {
 			t.Errorf(
 				"%s: AST does not match expected:\n\n%s",
 				name,
-				testfmt.Compare(expected, actual),
+				testfmt.Compare(string(expected), string(actual)),
 			)
 		}
 	}

@@ -1,0 +1,13 @@
+(document
+	(heading level=1
+		(text content="Document Title"))
+	(heading level=2
+		(text content="Section 1"))
+	(heading level=3
+		(text content="Section 1.1"))
+	(heading level=2
+		(text content="Section 2"))
+	(paragraph
+		(text content="not part of the heading"))
+	(paragraph
+		(text content="#also not a heading")))
