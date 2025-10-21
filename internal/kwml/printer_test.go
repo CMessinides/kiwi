@@ -10,24 +10,24 @@ import (
 )
 
 func TestPrinter(t *testing.T) {
-	doc := func(blocks ...kwml.Node) kwml.Node {
+	doc := func(blocks ...kwml.BlockNode) *kwml.Document {
 		return &kwml.Document{
-			Blocks: blocks,
+			Children: blocks,
 		}
 	}
 
-	h := func(level int, spans ...kwml.Node) kwml.Node {
+	h := func(level int, children ...kwml.InlineNode) *kwml.Heading {
 		return &kwml.Heading{
-			Level: level,
-			Spans: spans,
+			Level:    level,
+			Children: children,
 		}
 	}
 
-	p := func(spans ...kwml.Node) kwml.Node {
-		return &kwml.Paragraph{Spans: spans}
+	p := func(children ...kwml.InlineNode) *kwml.Paragraph {
+		return &kwml.Paragraph{Children: children}
 	}
 
-	txt := func(content string) kwml.Node {
+	txt := func(content string) *kwml.Text {
 		return &kwml.Text{Content: []byte(content)}
 	}
 

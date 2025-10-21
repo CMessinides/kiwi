@@ -50,13 +50,13 @@ func (p *Printer) StartVisit(node Node) (v Visitor) {
 		p.printNode(
 			"verbatim",
 			"lang", v.Lang,
-			"content", string(v.Content),
+			"content", string(v.Raw),
 		)
 	case *Macro:
 		p.printNode(
 			"macro",
 			"tag", v.Tag,
-			"content", string(v.Content),
+			"content", string(v.Raw),
 		)
 	case *Text:
 		p.printNode("text", "content", string(v.Content))

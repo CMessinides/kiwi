@@ -5,242 +5,186 @@
 // HTML output.
 package kwml
 
-import "slices"
+import (
+	"iter"
+)
 
-type Node interface {
-	Children() []Node
-}
+// Interfaces
 
-type NodeAppender interface {
+type Node interface{}
+
+type BlockNode interface {
 	Node
-	Append(children ...Node) NodeAppender
+	blockNode()
 }
 
-type LineAppender interface {
+type InlineNode interface {
 	Node
-	AppendLine(line []byte) LineAppender
+	inlineNode()
 }
 
-type Document struct {
-	Blocks []Node
+type blockAppender interface {
+	BlockNode
+	appendBlocks(blocks ...BlockNode)
 }
 
-func (d *Document) Children() []Node {
-	return d.Blocks
+type listItemAppender interface {
+	BlockNode
+	appendListItems(items ...*ListItem)
 }
 
-func (d *Document) Append(children ...Node) NodeAppender {
-	d.Blocks = append(d.Blocks, children...)
-	return d
+type lineWriter interface {
+	writeLine(line []byte)
 }
 
-type Heading struct {
-	Level int
-	Spans []Node
+type rawBlock interface {
+	BlockNode
+	lineWriter
 }
 
-func (h *Heading) Children() []Node {
-	return h.Spans
+type listBlock interface {
+	BlockNode
+	listItemAppender
 }
 
-func (h *Heading) Append(children ...Node) NodeAppender {
-	h.Spans = append(h.Spans, children...)
-	return h
-}
-
-type Paragraph struct {
-	Spans []Node
-}
-
-func (p *Paragraph) Children() []Node {
-	return p.Spans
-}
-
-func (p *Paragraph) Append(children ...Node) NodeAppender {
-	p.Spans = append(p.Spans, children...)
-	return p
-}
-
-type Blockquote struct {
-	Content []Node
-}
-
-func (o *Blockquote) Children() []Node {
-	return o.Content
-}
-
-func (o *Blockquote) Append(children ...Node) NodeAppender {
-	o.Content = append(o.Content, children...)
-	return o
-}
-
-type OrderedList struct {
-	Items []Node
-}
-
-func (o *OrderedList) Children() []Node {
-	return o.Items
-}
-
-func (o *OrderedList) Append(children ...Node) NodeAppender {
-	o.Items = append(o.Items, children...)
-	return o
-}
-
-type UnorderedList struct {
-	Items []Node
-}
-
-func (u *UnorderedList) Append(children ...Node) NodeAppender {
-	u.Items = append(u.Items, children...)
-	return u
-}
-
-func (u *UnorderedList) Children() []Node {
-	return u.Items
-}
-
-type ListItem struct {
-	Content []Node
-}
-
-func (l *ListItem) Children() []Node {
-	return l.Content
-}
-
-func (l *ListItem) Append(children ...Node) NodeAppender {
-	l.Content = append(l.Content, children...)
-	return l
-}
-
-type Verbatim struct {
-	Lang    string
-	Content []byte
-}
-
-func (v *Verbatim) Children() []Node {
-	return nil
-}
-
-func (v *Verbatim) AppendLine(line []byte) LineAppender {
-	if len(v.Content) == 0 {
-		v.Content = slices.Clone(line)
-	} else {
-		v.Content = append(v.Content, '\n')
-		v.Content = append(v.Content, line...)
+func appendLine(curr []byte, line []byte) []byte {
+	if len(curr) > 0 {
+		curr = append(curr, '\n')
 	}
 
-	return v
+	return append(curr, line...)
 }
 
-type Macro struct {
-	Tag     string
-	Content []byte
-}
-
-func (m *Macro) Children() []Node {
-	return nil
-}
-
-func (m *Macro) AppendLine(line []byte) LineAppender {
-	if len(m.Content) == 0 {
-		m.Content = slices.Clone(line)
-	} else {
-		m.Content = append(m.Content, '\n')
-		m.Content = append(m.Content, line...)
+// Block nodes
+type (
+	Document struct {
+		Children []BlockNode
 	}
 
-	return m
-}
-
-type Text struct {
-	Content []byte
-}
-
-func (t *Text) Children() []Node {
-	return nil
-}
-
-func (t *Text) AppendLine(line []byte) LineAppender {
-	if len(t.Content) == 0 {
-		t.Content = slices.Clone(line)
-	} else {
-		t.Content = append(t.Content, '\n')
-		t.Content = append(t.Content, line...)
+	Heading struct {
+		Level    int
+		Children []InlineNode
 	}
 
-	return t
-}
-
-type Emphasis struct {
-	Spans []Node
-}
-
-func (e *Emphasis) Children() []Node {
-	return e.Spans
-}
-
-func (e *Emphasis) Append(children ...Node) NodeAppender {
-	e.Spans = append(e.Spans, children...)
-	return e
-}
-
-type StrongEmphasis struct {
-	Spans []Node
-}
-
-func (s *StrongEmphasis) Children() []Node {
-	return s.Spans
-}
-
-func (s *StrongEmphasis) Append(children ...Node) NodeAppender {
-	s.Spans = append(s.Spans, children...)
-	return s
-}
-
-type Code struct {
-	Content []byte
-}
-
-func (c *Code) Children() []Node {
-	return nil
-}
-
-type Link struct {
-	Spans  []Node
-	Target string
-}
-
-func (l *Link) Children() []Node {
-	return l.Spans
-}
-
-func (l *Link) Append(children ...Node) NodeAppender {
-	l.Spans = append(l.Spans, children...)
-	return l
-}
-
-type WikiLink struct {
-	Target string
-}
-
-func (w *WikiLink) Children() []Node {
-	return nil
-}
-
-type Visitor interface {
-	StartVisit(node Node) (v Visitor)
-	EndVisit(node Node)
-}
-
-func Walk(root Node, v Visitor) {
-	if v = v.StartVisit(root); v == nil {
-		return
+	Paragraph struct {
+		Children []InlineNode
 	}
 
-	for _, c := range root.Children() {
-		Walk(c, v)
+	Blockquote struct {
+		Children []BlockNode
 	}
 
-	v.EndVisit(root)
+	OrderedList struct {
+		Items []*ListItem
+	}
+
+	UnorderedList struct {
+		Items []*ListItem
+	}
+
+	ListItem struct {
+		Children []BlockNode
+	}
+
+	Verbatim struct {
+		Lang string
+		Raw  []byte
+	}
+
+	Macro struct {
+		Tag string
+		Raw []byte
+	}
+)
+
+// Implement [BlockNode] for all concrete block types.
+func (d *Document) blockNode()      {}
+func (h *Heading) blockNode()       {}
+func (p *Paragraph) blockNode()     {}
+func (b *Blockquote) blockNode()    {}
+func (o *OrderedList) blockNode()   {}
+func (u *UnorderedList) blockNode() {}
+func (l *ListItem) blockNode()      {}
+func (v *Verbatim) blockNode()      {}
+func (m *Macro) blockNode()         {}
+
+// Implement [childrenIterator] for block nodes with children.
+func (d *Document) iterChildren() iter.Seq[Node]      { return blockIter(d.Children) }
+func (h *Heading) iterChildren() iter.Seq[Node]       { return inlineIter(h.Children) }
+func (p *Paragraph) iterChildren() iter.Seq[Node]     { return inlineIter(p.Children) }
+func (b *Blockquote) iterChildren() iter.Seq[Node]    { return blockIter(b.Children) }
+func (o *OrderedList) iterChildren() iter.Seq[Node]   { return listItemIter(o.Items) }
+func (u *UnorderedList) iterChildren() iter.Seq[Node] { return listItemIter(u.Items) }
+func (l *ListItem) iterChildren() iter.Seq[Node]      { return blockIter(l.Children) }
+
+// Implement [blockAppender] for block nodes that contain other blocks.
+
+func (d *Document) appendBlocks(blocks ...BlockNode) {
+	d.Children = append(d.Children, blocks...)
 }
+
+func (b *Blockquote) appendBlocks(blocks ...BlockNode) {
+	b.Children = append(b.Children, blocks...)
+}
+
+func (l *ListItem) appendBlocks(blocks ...BlockNode) {
+	l.Children = append(l.Children, blocks...)
+}
+
+// Implement [listItemAppender] for list blocks.
+
+func (o *OrderedList) appendListItems(items ...*ListItem) {
+	o.Items = append(o.Items, items...)
+}
+
+func (u *UnorderedList) appendListItems(items ...*ListItem) {
+	u.Items = append(u.Items, items...)
+}
+
+// Implement [lineWriter] for the raw blocks, verbatim and macro.
+func (v *Verbatim) writeLine(line []byte) { v.Raw = appendLine(v.Raw, line) }
+func (m *Macro) writeLine(line []byte)    { m.Raw = appendLine(m.Raw, line) }
+
+// Inline nodes
+type (
+	Text struct {
+		Content []byte
+	}
+
+	Emphasis struct {
+		Children []InlineNode
+	}
+
+	StrongEmphasis struct {
+		Children []InlineNode
+	}
+
+	Code struct {
+		Raw []byte
+	}
+
+	Link struct {
+		Target   string
+		Children []InlineNode
+	}
+
+	WikiLink struct {
+		Target string
+	}
+)
+
+// Implement [InlineNode] for all concrete inline types.
+func (t *Text) inlineNode()           {}
+func (e *Emphasis) inlineNode()       {}
+func (s *StrongEmphasis) inlineNode() {}
+func (c *Code) inlineNode()           {}
+func (l *Link) inlineNode()           {}
+func (w *WikiLink) inlineNode()       {}
+
+// Implement [childrenIterator] for inline nodes with children.
+func (e *Emphasis) iterChildren() iter.Seq[Node]       { return inlineIter(e.Children) }
+func (s *StrongEmphasis) iterChildren() iter.Seq[Node] { return inlineIter(s.Children) }
+func (l *Link) iterChildren() iter.Seq[Node]           { return inlineIter(l.Children) }
+
+// Implement [lineWriter] for text nodes.
+func (t *Text) writeLine(line []byte) { t.Content = appendLine(t.Content, line) }

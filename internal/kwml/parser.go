@@ -5,6 +5,6 @@ import (
 )
 
 func Parse(r io.Reader) (doc *Document, err error) {
-	b := NewBlockParser(r)
-	return b.Parse()
+	b := newBlockParser(r)
+	return b.parse()
 }

@@ -39,10 +39,11 @@ func findText(line []byte) []byte {
 // the new node.
 func tryOpenParagraph(line []byte) (para *Paragraph, text *Text) {
 	if l := findText(line); l != nil {
-		p := &Paragraph{}
 		t := &Text{}
-		t.AppendLine(l)
-		p.Append(t)
+		t.writeLine(l)
+		p := &Paragraph{
+			Children: []InlineNode{t},
+		}
 
 		return p, t
 	}
@@ -57,14 +58,14 @@ func tryOpenHeading(line []byte) *Heading {
 		level := idxs[3] - idxs[2] // == length of the leading "#"s
 		rest := line[idxs[1]:]     // == text after the leading "#"s
 
-		h := &Heading{
-			Level: level,
-		}
 		t := &Text{}
 		if l := findText(rest); l != nil {
-			t.AppendLine(rest)
+			t.writeLine(rest)
 		}
-		h.Append(t)
+		h := &Heading{
+			Level:    level,
+			Children: []InlineNode{t},
+		}
 
 		return h
 	} else {
@@ -75,7 +76,7 @@ func tryOpenHeading(line []byte) *Heading {
 // tryOpenRaw tests if the line opens one of the two raw blocks (verbatim or
 // macro). If it does, it returns the new node, along with the `delim` string
 // that will close it. Otherwise, it returns nil and an empty string.
-func tryOpenRaw(line []byte) (raw LineAppender, delim string) {
+func tryOpenRaw(line []byte) (raw rawBlock, delim string) {
 	if m := reRawOpener.FindSubmatch(line); m != nil {
 		delim := string(m[1])
 		tag := string(m[2])
@@ -104,7 +105,7 @@ func tryOpenBlockquote(line []byte) (blockquote *Blockquote, delim string) {
 // tryOpenList tests if the line opens a list. If it does, it returns the new
 // node, and the offset of the list, which is the number of spaces that
 // following lines must be indented to be included in the list.
-func tryOpenList(line []byte) (list NodeAppender, offset int) {
+func tryOpenList(line []byte) (list listBlock, offset int) {
 	if idxs := reUnorderdListItemPrefix.FindIndex(line); idxs != nil {
 		return &UnorderedList{}, idxs[1]
 	} else if idxs := reOrderedListItemPrefix.FindIndex(line); idxs != nil {
@@ -114,7 +115,7 @@ func tryOpenList(line []byte) (list NodeAppender, offset int) {
 	}
 }
 
-// blockState represents a possible state that the [BlockParser] can be in.
+// blockState represents a possible state that the [blockParser] can be in.
 // The parser functions as a state machine: it pushes each line to the current
 // state, which returns the next state. This process repeats until there are
 // no more lines.
@@ -125,14 +126,14 @@ type blockState interface {
 // paragraphState handles parsing within a paragraph.
 type paragraphState struct {
 	parent blockState
-	text   LineAppender
+	text   lineWriter
 }
 
 // pushLine accepts any non-blank line. If it encounters a blank line,
 // it returns the parent state.
 func (p *paragraphState) pushLine(line []byte) (next blockState) {
 	if t := findText(line); t != nil {
-		p.text.AppendLine(t)
+		p.text.writeLine(t)
 		return p
 	} else {
 		return p.parent
@@ -142,7 +143,7 @@ func (p *paragraphState) pushLine(line []byte) (next blockState) {
 // listState handles parsing within an ordered or unordered list.
 type listState struct {
 	parent          blockState
-	list            NodeAppender
+	list            listItemAppender
 	offset          int
 	itemStartPrefix *regexp.Regexp
 }
@@ -155,7 +156,7 @@ func (l *listState) pushLine(line []byte) blockState {
 	if idxs := l.itemStartPrefix.FindIndex(line); idxs != nil {
 		// Start a new list item.
 		item := &ListItem{}
-		l.list.Append(item)
+		l.list.appendListItems(item)
 
 		return newListItemState(l, item, idxs[1], line)
 	}
@@ -166,7 +167,7 @@ func (l *listState) pushLine(line []byte) blockState {
 }
 
 // newListState creates a new [listState].
-func newListState(parent blockState, list NodeAppender, offset int) *listState {
+func newListState(parent blockState, list listBlock, offset int) *listState {
 	var marker string
 	switch l := list.(type) {
 	case *OrderedList:
@@ -229,7 +230,7 @@ func newListItemState(
 // rawState handles parsing within a raw block (verbatim or macro).
 type rawState struct {
 	parent blockState
-	node   LineAppender
+	node   lineWriter
 	delim  *regexp.Regexp
 }
 
@@ -239,7 +240,7 @@ func (v *rawState) pushLine(line []byte) (next blockState) {
 	if v.delim.Match(line) {
 		return v.parent
 	} else {
-		v.node.AppendLine(line)
+		v.node.writeLine(line)
 		return v
 	}
 }
@@ -247,7 +248,7 @@ func (v *rawState) pushLine(line []byte) (next blockState) {
 // containerState handles parsing in contexts that can contain multiple blocks,
 // like blockquotes, multi-line list items, or the root document itself.
 type containerState struct {
-	container NodeAppender
+	container blockAppender
 }
 
 // pushLine implements the [blockState] interface. It tests each line for
@@ -256,7 +257,7 @@ type containerState struct {
 // that block, or return itself to move on to the next block.
 func (c *containerState) pushLine(line []byte) blockState {
 	if r, delim := tryOpenRaw(line); r != nil {
-		c.container.Append(r)
+		c.container.appendBlocks(r)
 		return &rawState{
 			parent: c,
 			node:   r,
@@ -265,18 +266,18 @@ func (c *containerState) pushLine(line []byte) blockState {
 	}
 
 	if b, delim := tryOpenBlockquote(line); b != nil {
-		c.container.Append(b)
+		c.container.appendBlocks(b)
 		return newDelimitedContainerState(c, b, delim)
 	}
 
 	if h := tryOpenHeading(line); h != nil {
-		c.container.Append(h)
+		c.container.appendBlocks(h)
 		// Headings cannot be multi-line; return the current state.
 		return c
 	}
 
 	if l, offset := tryOpenList(line); l != nil {
-		c.container.Append(l)
+		c.container.appendBlocks(l)
 		listState := newListState(c, l, offset)
 
 		// Process the current line as part of the list.
@@ -284,7 +285,7 @@ func (c *containerState) pushLine(line []byte) blockState {
 	}
 
 	if p, t := tryOpenParagraph(line); p != nil {
-		c.container.Append(p)
+		c.container.appendBlocks(p)
 		return &paragraphState{
 			parent: c,
 			text:   t,
@@ -318,29 +319,26 @@ func (d *delimitedContainerState) pushLine(line []byte) blockState {
 }
 
 // newDelimitedContainerState returns a [delimitedContainerState] that adds
-// blocks to the given `container` until it reaches a line that matches
-// `delim`.
-func newDelimitedContainerState(parent blockState, container NodeAppender, delim string) *delimitedContainerState {
+// blocks to the given `container` until it reaches a line that matches `delim`.
+func newDelimitedContainerState(parent blockState, container blockAppender, delim string) *delimitedContainerState {
 	return &delimitedContainerState{
 		parent: parent,
-		sub: &containerState{
-			container: container,
-		},
-		delim: regexp.MustCompile(`^\s*` + delim + `\s*$`),
+		sub:    &containerState{container: container},
+		delim:  regexp.MustCompile(`^\s*` + delim + `\s*$`),
 	}
 }
 
-// BlockParser parses the block structure of a KWML source document.
-type BlockParser struct {
+// blockParser parses the block structure of a KWML source document.
+type blockParser struct {
 	scanner  *bufio.Scanner
 	document *Document
 	current  blockState
 }
 
-// Parse scans lines from the internal scanner to build up a tree of blocks.
+// parse scans lines from the internal scanner to build up a tree of blocks.
 // It returns an error if the scanner encounters one. Otherwise, it returns
 // the parsed document.
-func (b *BlockParser) Parse() (doc *Document, err error) {
+func (b *blockParser) parse() (doc *Document, err error) {
 	for b.scanner.Scan() {
 		if err := b.scanner.Err(); err != nil {
 			return nil, err
@@ -353,11 +351,11 @@ func (b *BlockParser) Parse() (doc *Document, err error) {
 	return b.document, nil
 }
 
-// NewBlockParser returns a new [BlockParser] that will parse from the given
+// newBlockParser returns a new [blockParser] that will parse from the given
 // [io.Reader].
-func NewBlockParser(r io.Reader) *BlockParser {
+func newBlockParser(r io.Reader) *blockParser {
 	doc := &Document{}
-	return &BlockParser{
+	return &blockParser{
 		scanner:  bufio.NewScanner(r),
 		document: doc,
 		current:  &containerState{doc},
