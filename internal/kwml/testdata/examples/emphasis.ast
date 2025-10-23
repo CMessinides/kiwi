@@ -1,0 +1,6 @@
+(document
+	(paragraph
+		(text content="This paragraph contains ")
+		(emphasis
+			(text content="a span of emphasized"))
+		(text content=" text.")))

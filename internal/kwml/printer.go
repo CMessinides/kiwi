@@ -7,92 +7,101 @@ import (
 )
 
 type Printer struct {
-	w        io.Writer
-	err      error
-	depth    int
-	dangling int
-	started  bool
+	w     io.Writer
+	err   error
+	depth int
 }
 
-func (p *Printer) StartVisit(node Node) (v Visitor) {
+func (p *Printer) Print(node Node) error {
+	p.printNode(node)
 	if p.err != nil {
-		return nil
+		return p.err
 	}
 
-	if p.started {
-		p.closeDangling()
-		if p.err != nil {
-			return nil
-		}
-	} else {
-		p.started = true
-	}
-
-	p.dangling = 0
-	p.depth++
-
-	switch v := node.(type) {
-	case *Document:
-		p.printNode("document")
-	case *Heading:
-		p.printNode("heading", "level", v.Level)
-	case *Paragraph:
-		p.printNode("paragraph")
-	case *Blockquote:
-		p.printNode("blockquote")
-	case *OrderedList:
-		p.printNode("ordered_list")
-	case *UnorderedList:
-		p.printNode("unordered_list")
-	case *ListItem:
-		p.printNode("list_item")
-	case *Verbatim:
-		p.printNode(
-			"verbatim",
-			"lang", v.Lang,
-			"content", string(v.Raw),
-		)
-	case *Macro:
-		p.printNode(
-			"macro",
-			"tag", v.Tag,
-			"content", string(v.Raw),
-		)
-	case *Text:
-		p.printNode("text", "content", string(v.Content))
-	case *Emphasis:
-		p.printNode("emphasis")
-	case *StrongEmphasis:
-		p.printNode("strong_emphasis")
-	case *Link:
-		p.printNode("link", "target", v.Target)
-	case *WikiLink:
-		p.printNode("wiki_link", "target", v.Target)
-	}
-
-	if p.err != nil {
-		return nil
-	}
-
-	return p
-}
-
-func (p *Printer) EndVisit(node Node) {
-	p.depth--
-	p.dangling++
-
-	if p.depth == 0 {
-		p.closeDangling()
-	}
+	_, p.err = fmt.Fprint(p.w, "\n")
+	return p.err
 }
 
 func (p *Printer) Err() error {
 	return p.err
 }
 
-func (p *Printer) printNode(name string, attrs ...any) error {
-	indent := strings.Repeat("\t", p.depth-1)
-	if _, p.err = fmt.Fprint(p.w, indent, "(", name); p.err != nil {
+func (p *Printer) printNode(node Node) error {
+	if p.err != nil {
+		return p.err
+	}
+
+	if _, p.err = fmt.Fprint(p.w, "("); p.err != nil {
+		return p.err
+	}
+
+	switch v := node.(type) {
+	case *Document:
+		p.printHeader("document")
+	case *Heading:
+		p.printHeader("heading", "level", v.Level)
+	case *Paragraph:
+		p.printHeader("paragraph")
+	case *Blockquote:
+		p.printHeader("blockquote")
+	case *OrderedList:
+		p.printHeader("ordered_list")
+	case *UnorderedList:
+		p.printHeader("unordered_list")
+	case *ListItem:
+		p.printHeader("list_item")
+	case *Verbatim:
+		p.printHeader(
+			"verbatim",
+			"lang", v.Lang,
+			"content", string(v.Raw),
+		)
+	case *Macro:
+		p.printHeader(
+			"macro",
+			"tag", v.Tag,
+			"content", string(v.Raw),
+		)
+	case *Text:
+		p.printHeader("text", "content", string(v.Content))
+	case *Emphasis:
+		p.printHeader("emphasis")
+	case *StrongEmphasis:
+		p.printHeader("strong_emphasis")
+	case *Link:
+		p.printHeader("link", "target", v.Target)
+	case *WikiLink:
+		p.printHeader("wiki_link", "target", v.Target)
+	default:
+		panic(fmt.Sprintf("unexpected node type: %T", v))
+	}
+
+	if p.err != nil {
+		return p.err
+	}
+
+	if i, ok := node.(childrenIterator); ok {
+		p.depth++
+		indent := strings.Repeat("\t", p.depth)
+		for c := range i.iterChildren() {
+			if _, p.err = fmt.Fprint(p.w, "\n", indent); p.err != nil {
+				return p.err
+			}
+
+			p.printNode(c)
+			if p.err != nil {
+				return p.err
+			}
+		}
+		p.depth--
+	}
+
+	_, p.err = fmt.Fprint(p.w, ")")
+	return p.err
+}
+
+func (p *Printer) printHeader(name string, attrs ...any) error {
+	if _, p.err = fmt.Fprint(p.w, name); p.err != nil {
 		return p.err
 	}
 
@@ -112,14 +121,7 @@ func (p *Printer) printNode(name string, attrs ...any) error {
 	return nil
 }
 
-func (p *Printer) closeDangling() {
-	// Close any dangling nodes and start a new line.
-	parens := strings.Repeat(")", p.dangling)
-	_, p.err = fmt.Fprintln(p.w, parens)
-}
-
 func PrintAST(w io.Writer, root Node) error {
 	p := &Printer{w: w}
-	Walk(root, p)
-	return p.Err()
+	return p.Print(root)
 }

@@ -6,5 +6,13 @@ import (
 
 func Parse(r io.Reader) (doc *Document, err error) {
 	b := newBlockParser(r)
-	return b.parse()
+	doc, err = b.parse()
+	if err != nil {
+		return nil, err
+	}
+
+	i := &inlineVisitor{}
+	Walk(doc, i)
+
+	return doc, nil
 }
