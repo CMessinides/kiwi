@@ -1,0 +1,6 @@
+(document
+	(paragraph
+		(text content="This paragraph contains ")
+		(strong_emphasis
+			(text content="a span of bolded"))
+		(text content=" text.")))

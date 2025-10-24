@@ -35,17 +35,22 @@ func (i *inlineParser) parse() []InlineNode {
 scanLoop:
 	for !i.isAtEnd() {
 		switch i.advance() {
-		case '_':
+		case '_', '*':
 			i.resetBuffer()
+			literal := string(i.curr)
 			canClose := !unicode.IsSpace(i.prev)
 			if canClose {
-				if idx, delim := i.matchDelimiter("_"); idx != -1 {
+				if idx, delim := i.matchDelimiter(literal); idx != -1 {
 					c := i.copyNodesAfter(delim)
-					emph := &Emphasis{
-						Children: c,
+
+					var grp InlineNode
+					if i.curr == '_' {
+						grp = &Emphasis{Children: c}
+					} else {
+						grp = &StrongEmphasis{Children: c}
 					}
 
-					i.nodes = append(i.nodes[:delim.index], emph)
+					i.nodes = append(i.nodes[:delim.index], grp)
 					i.delimiters = i.delimiters[:idx]
 					continue scanLoop
 				}
@@ -57,7 +62,7 @@ scanLoop:
 			canOpen := !unicode.IsSpace(i.peek())
 			if canOpen {
 				i.delimiters = append(i.delimiters, delimiter{
-					literal: "_",
+					literal: literal,
 					index:   len(i.nodes) - 1,
 				})
 			}
