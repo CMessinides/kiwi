@@ -8,71 +8,134 @@ import (
 
 type delimiter struct {
 	literal string
-	index   int
+	node    int
+}
+
+type runeStream struct {
+	raw                  []byte
+	index                int
+	prev, curr           rune
+	prevWidth, currWidth int
+}
+
+func (r *runeStream) advance() (char rune, width int) {
+	if r.isAtEnd() {
+		return
+	}
+
+	r.prev = r.curr
+	r.prevWidth = r.currWidth
+	r.curr, r.currWidth = utf8.DecodeRune(r.raw[r.index:])
+	r.index += r.currWidth
+	return r.curr, r.currWidth
+}
+
+func (r *runeStream) peek() (char rune, width int) {
+	if r.isAtEnd() {
+		return
+	}
+
+	return utf8.DecodeRune(r.raw[r.index:])
+}
+
+func (r *runeStream) match(char rune) bool {
+	if r.isAtEnd() {
+		return false
+	}
+
+	next, _ := r.peek()
+	return next == char
+}
+
+func (r *runeStream) current() (char rune, width int) {
+	return r.curr, r.currWidth
+}
+
+func (r *runeStream) currentBytes() []byte {
+	i := r.index
+	h := i - r.currWidth
+	return r.raw[h:i]
+}
+
+func (r *runeStream) previous() (char rune, width int) {
+	return r.prev, r.prevWidth
+}
+
+func (r *runeStream) isAtEnd() bool {
+	return r.index >= len(r.raw)
+}
+
+func (r *runeStream) isEmpty() bool {
+	return len(r.raw) == 0
+}
+
+func newRuneStream(raw []byte) *runeStream {
+	return &runeStream{raw: raw}
 }
 
 type inlineParser struct {
-	raw        []byte
+	input      *runeStream
 	buf        []byte
-	prev, curr rune
-	currLen    int
-	index      int
 	delimiters []delimiter
 	nodes      []InlineNode
 	inVerbatim bool
 }
 
 func (i *inlineParser) parse() []InlineNode {
-	// Special case: an empty slice yields one empty text node.
-	if len(i.raw) == 0 {
-		i.nodes = append(i.nodes, &Text{
-			Content: i.raw,
-		})
-
+	// Special case: an empty input yields one empty text node.
+	if i.input.isEmpty() {
+		i.push(&Text{Content: i.input.raw})
 		return i.nodes
 	}
 
-scanLoop:
-	for !i.isAtEnd() {
-		switch i.advance() {
-		case '_', '*':
-			i.resetBuffer()
-			literal := string(i.curr)
-			canClose := !unicode.IsSpace(i.prev)
-			if canClose {
-				if idx, delim := i.matchDelimiter(literal); idx != -1 {
-					c := i.copyNodesAfter(delim)
+	for !i.input.isAtEnd() {
+		char, width := i.input.advance()
 
-					var grp InlineNode
-					if i.curr == '_' {
-						grp = &Emphasis{Children: c}
-					} else {
-						grp = &StrongEmphasis{Children: c}
-					}
-
-					i.nodes = append(i.nodes[:delim.index], grp)
-					i.delimiters = i.delimiters[:idx]
-					continue scanLoop
-				}
-			}
-
-			i.nodes = append(i.nodes, &Text{
-				Content: i.raw[i.index : i.index+i.currLen],
+		switch char {
+		case '_':
+			i.handleEmphasis("_", func(children []InlineNode) InlineNode {
+				return &Emphasis{Children: children}
 			})
-			canOpen := !unicode.IsSpace(i.peek())
-			if canOpen {
-				i.delimiters = append(i.delimiters, delimiter{
-					literal: literal,
-					index:   len(i.nodes) - 1,
-				})
-			}
+		case '*':
+			i.handleEmphasis("*", func(children []InlineNode) InlineNode {
+				return &StrongEmphasis{Children: children}
+			})
 		default:
-			i.growBuffer()
+			i.growBuffer(width)
 		}
 	}
 
-	i.resetBuffer()
+	i.commitBuffer()
 	return i.nodes
+}
+
+func (i *inlineParser) handleEmphasis(literal string, produce func(children []InlineNode) InlineNode) {
+	i.commitBuffer()
+
+	spaceBefore, spaceAfter := i.detectWhitespace()
+	canClose := !spaceBefore
+	canOpen := !spaceAfter
+
+	if canClose {
+		if idx, delim := i.matchDelimiter(literal); idx != -1 {
+			if c := i.nodes[delim.node+1:]; len(c) > 0 {
+				children := make([]InlineNode, len(c))
+				copy(children, c)
+
+				i.nodes = append(i.nodes[:delim.node], produce(children))
+				i.delimiters = i.delimiters[:idx]
+				return
+			}
+		}
+	}
+
+	i.push(&Text{Content: i.input.currentBytes()})
+	if canOpen {
+		i.delimiters = append(i.delimiters, delimiter{
+			literal: literal,
+			node:    len(i.nodes) - 1,
+		})
+	}
 }
 
 func (i *inlineParser) matchDelimiter(pattern string) (index int, delim delimiter) {
@@ -82,59 +145,38 @@ func (i *inlineParser) matchDelimiter(pattern string) (index int, delim delimite
 		}
 	}
 
-	return -1, delimiter{}
+	return -1, delim
 }
 
-func (i *inlineParser) copyNodesAfter(delim delimiter) []InlineNode {
-	size := (len(i.nodes) - 1) - delim.index
-	cpy := make([]InlineNode, size)
-	copy(cpy, i.nodes[delim.index+1:])
-	return cpy
+func (i *inlineParser) detectWhitespace() (spaceBefore bool, spaceAfter bool) {
+	prev, _ := i.input.previous()
+	next, _ := i.input.peek()
+
+	return unicode.IsSpace(prev), unicode.IsSpace(next)
 }
 
-func (i *inlineParser) resetBuffer() {
+func (i *inlineParser) growBuffer(n int) {
+	i.buf = i.buf[:len(i.buf)+n]
+}
+
+func (i *inlineParser) commitBuffer() (committed bool) {
 	if len(i.buf) > 0 {
-		i.nodes = append(i.nodes, &Text{
-			Content: i.buf,
-		})
+		i.push(&Text{Content: i.buf})
+		committed = true
 	}
 
-	i.buf = i.raw[i.index:i.index]
+	i.buf = i.input.raw[i.input.index:i.input.index]
+	return committed
 }
 
-func (i *inlineParser) growBuffer() {
-	i.buf = i.buf[:len(i.buf)+i.currLen]
-}
-
-func (i *inlineParser) advance() (char rune) {
-	if i.isAtEnd() {
-		return 0
-	}
-
-	i.prev = i.curr
-	i.curr, i.currLen = utf8.DecodeRune(i.raw[i.index:])
-	i.index += i.currLen
-	return i.curr
-}
-
-func (i *inlineParser) peek() (next rune) {
-	if i.isAtEnd() {
-		return 0
-	}
-
-	next, _ = utf8.DecodeRune(i.raw[i.index:])
-	return next
-}
-
-func (i *inlineParser) isAtEnd() bool {
-	return i.index >= len(i.raw)
+func (i *inlineParser) push(node InlineNode) {
+	i.nodes = append(i.nodes, node)
 }
 
 func newInlineParser(text []byte) *inlineParser {
 	return &inlineParser{
-		raw:   text,
+		input: newRuneStream(text),
 		buf:   text[0:0],
-		nodes: []InlineNode{},
 	}
 }
 

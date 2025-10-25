@@ -11,7 +11,7 @@ import (
 
 // Interfaces
 
-type Node interface{}
+type Node any
 
 type BlockNode interface {
 	Node
@@ -26,6 +26,10 @@ type InlineNode interface {
 type blockAppender interface {
 	BlockNode
 	appendBlocks(blocks ...BlockNode)
+}
+
+type inlineContainer interface {
+	replaceInlines(nodes []InlineNode)
 }
 
 type listItemAppender interface {
@@ -131,6 +135,16 @@ func (l *ListItem) appendBlocks(blocks ...BlockNode) {
 	l.Children = append(l.Children, blocks...)
 }
 
+// Implement [inlineContainer] for block nodes that contain inline nodes.
+
+func (p *Paragraph) replaceInlines(nodes []InlineNode) {
+	p.Children = nodes
+}
+
+func (h *Heading) replaceInlines(nodes []InlineNode) {
+	h.Children = nodes
+}
+
 // Implement [listItemAppender] for list blocks.
 
 func (o *OrderedList) appendListItems(items ...*ListItem) {
@@ -185,6 +199,20 @@ func (w *WikiLink) inlineNode()       {}
 func (e *Emphasis) iterChildren() iter.Seq[Node]       { return inlineIter(e.Children) }
 func (s *StrongEmphasis) iterChildren() iter.Seq[Node] { return inlineIter(s.Children) }
 func (l *Link) iterChildren() iter.Seq[Node]           { return inlineIter(l.Children) }
+
+// Implement [inlineContainer] for inline nodes with children.
+
+func (e *Emphasis) replaceInlines(nodes []InlineNode) {
+	e.Children = nodes
+}
+
+func (s *StrongEmphasis) replaceInlines(nodes []InlineNode) {
+	s.Children = nodes
+}
+
+func (l *Link) replaceInlines(nodes []InlineNode) {
+	l.Children = nodes
+}
 
 // Implement [lineWriter] for text nodes.
 func (t *Text) writeLine(line []byte) { t.Content = appendLine(t.Content, line) }
