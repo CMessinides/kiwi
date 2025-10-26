@@ -44,7 +44,7 @@ func TestPrinter(t *testing.T) {
 		{
 			"empty document",
 			doc(),
-			o("(document)"),
+			o("document"),
 		},
 		{
 			"paragraphs",
@@ -53,11 +53,11 @@ func TestPrinter(t *testing.T) {
 				p(txt("A multi-line\nparagraph")),
 			),
 			o(
-				"(document",
-				"\t(paragraph",
-				"\t\t(text content=\"Hello world\"))",
-				"\t(paragraph",
-				"\t\t(text content=\"A multi-line\\nparagraph\")))",
+				"document",
+				"\tparagraph",
+				"\t\ttext content=\"Hello world\"",
+				"\tparagraph",
+				"\t\ttext content=\"A multi-line\\nparagraph\"",
 			),
 		},
 		{
@@ -67,10 +67,10 @@ func TestPrinter(t *testing.T) {
 				h(2, txt("Section heading")),
 			),
 			o(
-				"(document",
-				"\t(heading level=1)",
-				"\t(heading level=2",
-				"\t\t(text content=\"Section heading\")))",
+				"document",
+				"\theading level=1",
+				"\theading level=2",
+				"\t\ttext content=\"Section heading\"",
 			),
 		},
 	}

@@ -1,12 +1,12 @@
-(document
-	(paragraph
-		(text content="Opening paragraph here"))
-	(unordered_list
-		(list_item
-			(paragraph
-				(text content="Indented item 1")))
-		(list_item
-			(paragraph
-				(text content="Indented item 2"))))
-	(paragraph
-		(text content="this is a new paragraph bc it doesn't match the item indentation")))
+document
+	paragraph
+		text content="Opening paragraph here"
+	unordered_list
+		list_item
+			paragraph
+				text content="Indented item 1"
+		list_item
+			paragraph
+				text content="Indented item 2"
+	paragraph
+		text content="this is a new paragraph bc it doesn't match the item indentation"

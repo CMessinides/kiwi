@@ -1,11 +1,11 @@
-(document
-	(unordered_list
-		(list_item
-			(paragraph
-				(text content="Eggs")))
-		(list_item
-			(paragraph
-				(text content="Milk (almond)")))
-		(list_item
-			(paragraph
-				(text content="Flour")))))
+document
+	unordered_list
+		list_item
+			paragraph
+				text content="Eggs"
+		list_item
+			paragraph
+				text content="Milk (almond)"
+		list_item
+			paragraph
+				text content="Flour"

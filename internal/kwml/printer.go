@@ -6,103 +6,79 @@ import (
 	"strings"
 )
 
-type Printer struct {
+type printer struct {
 	w     io.Writer
 	err   error
 	depth int
 }
 
-func (p *Printer) Print(node Node) error {
-	p.printNode(node)
+func (p *printer) StartVisit(node Node) (v Visitor) {
 	if p.err != nil {
-		return p.err
-	}
-
-	_, p.err = fmt.Fprint(p.w, "\n")
-	return p.err
-}
-
-func (p *Printer) Err() error {
-	return p.err
-}
-
-func (p *Printer) printNode(node Node) error {
-	if p.err != nil {
-		return p.err
-	}
-
-	if _, p.err = fmt.Fprint(p.w, "("); p.err != nil {
-		return p.err
+		return nil
 	}
 
 	switch v := node.(type) {
 	case *Document:
-		p.printHeader("document")
+		p.printNode("document")
 	case *Heading:
-		p.printHeader("heading", "level", v.Level)
+		p.printNode("heading", "level", v.Level)
 	case *Paragraph:
-		p.printHeader("paragraph")
+		p.printNode("paragraph")
 	case *Blockquote:
-		p.printHeader("blockquote")
+		p.printNode("blockquote")
 	case *OrderedList:
-		p.printHeader("ordered_list")
+		p.printNode("ordered_list")
 	case *UnorderedList:
-		p.printHeader("unordered_list")
+		p.printNode("unordered_list")
 	case *ListItem:
-		p.printHeader("list_item")
+		p.printNode("list_item")
 	case *Verbatim:
-		p.printHeader(
+		p.printNode(
 			"verbatim",
 			"lang", v.Lang,
 			"content", string(v.Raw),
 		)
 	case *Macro:
-		p.printHeader(
+		p.printNode(
 			"macro",
 			"tag", v.Tag,
 			"content", string(v.Raw),
 		)
 	case *Text:
-		p.printHeader("text", "content", string(v.Content))
+		p.printNode("text", "content", string(v.Content))
 	case *Emphasis:
-		p.printHeader("emphasis")
+		p.printNode("emphasis")
 	case *StrongEmphasis:
-		p.printHeader("strong_emphasis")
+		p.printNode("strong_emphasis")
 	case *Link:
-		p.printHeader("link", "target", v.Target)
+		p.printNode("link", "target", v.Target)
 	case *WikiLink:
-		p.printHeader("wiki_link", "target", v.Target)
+		p.printNode("wiki_link", "target", v.Target)
 	default:
 		panic(fmt.Sprintf("unexpected node type: %T", v))
 	}
 
-	if p.err != nil {
-		return p.err
+	if p.err == nil {
+		_, p.err = fmt.Fprintln(p.w)
 	}
 
-	if i, ok := node.(childrenIterator); ok {
-		p.depth++
-		indent := strings.Repeat("\t", p.depth)
-		for c := range i.iterChildren() {
-			if _, p.err = fmt.Fprint(p.w, "\n", indent); p.err != nil {
-				return p.err
-			}
+	p.depth++
+	return p
+}
 
-			p.printNode(c)
-			if p.err != nil {
-				return p.err
-			}
-		}
-		p.depth--
-	}
+func (p *printer) EndVisit(node Node) {
+	p.depth--
+}
 
-	_, p.err = fmt.Fprint(p.w, ")")
+func (p *printer) Err() error {
 	return p.err
 }
 
-func (p *Printer) printHeader(name string, attrs ...any) error {
-	if _, p.err = fmt.Fprint(p.w, name); p.err != nil {
-		return p.err
+func (p *printer) printNode(name string, attrs ...any) {
+	indent := strings.Repeat("\t", p.depth)
+	_, p.err = fmt.Fprint(p.w, indent, name)
+	if p.err != nil {
+		return
 	}
 
 	for i := 0; i < len(attrs); i++ {
@@ -113,15 +89,15 @@ func (p *Printer) printHeader(name string, attrs ...any) error {
 			v = attrs[i]
 		}
 
-		if _, p.err = fmt.Fprintf(p.w, " %s=%#v", key, v); p.err != nil {
-			return p.err
+		_, p.err = fmt.Fprintf(p.w, " %s=%#v", key, v)
+		if p.err != nil {
+			return
 		}
 	}
-
-	return nil
 }
 
 func PrintAST(w io.Writer, root Node) error {
-	p := &Printer{w: w}
-	return p.Print(root)
+	p := &printer{w: w}
+	Walk(root, p)
+	return p.Err()
 }

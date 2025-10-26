@@ -1,2 +1,2 @@
-(document
-	(macro tag="kwql" content="type == \"recipe\" and meta.total_time < 60m"))
+document
+	macro tag="kwql" content="type == \"recipe\" and meta.total_time < 60m"

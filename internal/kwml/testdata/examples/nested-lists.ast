@@ -1,35 +1,35 @@
-(document
-	(ordered_list
-		(list_item
-			(paragraph
-				(text content="Preheat the oven to 350 degrees")))
-		(list_item
-			(paragraph
-				(text content="Chop the fillings"))
-			(unordered_list
-				(list_item
-					(paragraph
-						(text content="Some options include:"))
-					(unordered_list
-						(list_item
-							(paragraph
-								(text content="Bell peppers")))
-						(list_item
-							(paragraph
-								(text content="Mushrooms")))
-						(list_item
-							(paragraph
-								(text content="Spinach")))))
-				(list_item
-					(paragraph
-						(text content="(Optional) Dice ham if using")))))
-		(list_item
-			(paragraph
-				(text content="Cook the eggs"))
-			(unordered_list
-				(list_item
-					(paragraph
-						(text content="Use quail eggs if you can find them")))
-				(list_item
-					(paragraph
-						(text content="Use medium-low heat for best results")))))))
+document
+	ordered_list
+		list_item
+			paragraph
+				text content="Preheat the oven to 350 degrees"
+		list_item
+			paragraph
+				text content="Chop the fillings"
+			unordered_list
+				list_item
+					paragraph
+						text content="Some options include:"
+					unordered_list
+						list_item
+							paragraph
+								text content="Bell peppers"
+						list_item
+							paragraph
+								text content="Mushrooms"
+						list_item
+							paragraph
+								text content="Spinach"
+				list_item
+					paragraph
+						text content="(Optional) Dice ham if using"
+		list_item
+			paragraph
+				text content="Cook the eggs"
+			unordered_list
+				list_item
+					paragraph
+						text content="Use quail eggs if you can find them"
+				list_item
+					paragraph
+						text content="Use medium-low heat for best results"

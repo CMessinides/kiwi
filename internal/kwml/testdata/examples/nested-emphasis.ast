@@ -1,12 +1,12 @@
-(document
-	(paragraph
-		(strong_emphasis
-			(text content="This ")
-			(emphasis
-				(text content="nested"))
-			(text content=" emphasis ")
-			(strong_emphasis
-				(text content="parses ")
-				(emphasis
-					(text content="correctly"))
-				(text content=".")))))
+document
+	paragraph
+		strong_emphasis
+			text content="This "
+			emphasis
+				text content="nested"
+			text content=" emphasis "
+			strong_emphasis
+				text content="parses "
+				emphasis
+					text content="correctly"
+				text content="."

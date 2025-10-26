@@ -1,14 +1,14 @@
-(document
-	(blockquote
-		(paragraph
-			(text content="start quote 1"))
-		(blockquote
-			(paragraph
-				(text content="start quote 2"))
-			(blockquote
-				(paragraph
-					(text content="quote 3")))
-			(paragraph
-				(text content="end quote 2")))
-		(paragraph
-			(text content="end quote 1"))))
+document
+	blockquote
+		paragraph
+			text content="start quote 1"
+		blockquote
+			paragraph
+				text content="start quote 2"
+			blockquote
+				paragraph
+					text content="quote 3"
+			paragraph
+				text content="end quote 2"
+		paragraph
+			text content="end quote 1"

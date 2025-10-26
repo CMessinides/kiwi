@@ -1,11 +1,11 @@
-(document
-	(ordered_list
-		(list_item
-			(paragraph
-				(text content="Step 1")))
-		(list_item
-			(paragraph
-				(text content="Step 2")))
-		(list_item
-			(paragraph
-				(text content="Step 3")))))
+document
+	ordered_list
+		list_item
+			paragraph
+				text content="Step 1"
+		list_item
+			paragraph
+				text content="Step 2"
+		list_item
+			paragraph
+				text content="Step 3"
