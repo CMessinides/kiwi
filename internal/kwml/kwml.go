@@ -7,6 +7,7 @@ package kwml
 
 import (
 	"iter"
+	"slices"
 )
 
 // Interfaces
@@ -21,6 +22,14 @@ type BlockNode interface {
 type InlineNode interface {
 	Node
 	inlineNode()
+}
+
+type BlockContainer interface {
+	Blocks() iter.Seq[BlockNode]
+}
+
+type InlineContainer interface {
+	Inlines() iter.Seq[InlineNode]
 }
 
 type blockAppender interface {
@@ -112,14 +121,36 @@ func (l *ListItem) blockNode()      {}
 func (v *Verbatim) blockNode()      {}
 func (m *Macro) blockNode()         {}
 
-// Implement [childrenIterator] for block nodes with children.
-func (d *Document) iterChildren() iter.Seq[Node]      { return blockIter(d.Children) }
-func (h *Heading) iterChildren() iter.Seq[Node]       { return inlineIter(h.Children) }
-func (p *Paragraph) iterChildren() iter.Seq[Node]     { return inlineIter(p.Children) }
-func (b *Blockquote) iterChildren() iter.Seq[Node]    { return blockIter(b.Children) }
-func (o *OrderedList) iterChildren() iter.Seq[Node]   { return listItemIter(o.Items) }
-func (u *UnorderedList) iterChildren() iter.Seq[Node] { return listItemIter(u.Items) }
-func (l *ListItem) iterChildren() iter.Seq[Node]      { return blockIter(l.Children) }
+// Implement [BlockContainer] for block nodes with block children.
+
+func (d *Document) Blocks() iter.Seq[BlockNode]   { return slices.Values(d.Children) }
+func (b *Blockquote) Blocks() iter.Seq[BlockNode] { return slices.Values(b.Children) }
+func (l *ListItem) Blocks() iter.Seq[BlockNode]   { return slices.Values(l.Children) }
+
+func (o *OrderedList) Blocks() iter.Seq[BlockNode] {
+	return func(yield func(BlockNode) bool) {
+		for _, b := range o.Items {
+			if !yield(b) {
+				return
+			}
+		}
+	}
+}
+
+func (u *UnorderedList) Blocks() iter.Seq[BlockNode] {
+	return func(yield func(BlockNode) bool) {
+		for _, b := range u.Items {
+			if !yield(b) {
+				return
+			}
+		}
+	}
+}
+
+// Implement [InlineContainer] for block nodes with inline children.
+
+func (h *Heading) Inlines() iter.Seq[InlineNode]   { return slices.Values(h.Children) }
+func (p *Paragraph) Inlines() iter.Seq[InlineNode] { return slices.Values(p.Children) }
 
 // Implement [blockAppender] for block nodes that contain other blocks.
 
@@ -195,10 +226,11 @@ func (c *Code) inlineNode()           {}
 func (l *Link) inlineNode()           {}
 func (w *WikiLink) inlineNode()       {}
 
-// Implement [childrenIterator] for inline nodes with children.
-func (e *Emphasis) iterChildren() iter.Seq[Node]       { return inlineIter(e.Children) }
-func (s *StrongEmphasis) iterChildren() iter.Seq[Node] { return inlineIter(s.Children) }
-func (l *Link) iterChildren() iter.Seq[Node]           { return inlineIter(l.Children) }
+// Implement [InlineContainer] for inline nodes with inline children.
+
+func (e *Emphasis) Inlines() iter.Seq[InlineNode]       { return slices.Values(e.Children) }
+func (s *StrongEmphasis) Inlines() iter.Seq[InlineNode] { return slices.Values(s.Children) }
+func (l *Link) Inlines() iter.Seq[InlineNode]           { return slices.Values(l.Children) }
 
 // Implement [inlineContainer] for inline nodes with children.
 
