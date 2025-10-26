@@ -14,5 +14,8 @@ func Parse(r io.Reader) (doc *Document, err error) {
 	i := &inlineVisitor{}
 	Walk(doc, i)
 
+	n := &normalizer{}
+	Walk(doc, n)
+
 	return doc, nil
 }

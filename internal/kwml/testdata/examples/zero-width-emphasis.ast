@@ -1,0 +1,5 @@
+document
+	paragraph
+		text content="Not emphasis -> __ <- Not emphasis"
+	paragraph
+		text content="Not bold -> ** <- Not bold"
