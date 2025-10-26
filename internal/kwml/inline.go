@@ -11,70 +11,70 @@ type delimiter struct {
 	node    int
 }
 
-type runeStream struct {
+type scanner struct {
 	raw                  []byte
 	index                int
 	prev, curr           rune
 	prevWidth, currWidth int
 }
 
-func (r *runeStream) advance() (char rune, width int) {
-	if r.isAtEnd() {
+func (s *scanner) advance() (char rune, width int) {
+	if s.isAtEnd() {
 		return
 	}
 
-	r.prev = r.curr
-	r.prevWidth = r.currWidth
-	r.curr, r.currWidth = utf8.DecodeRune(r.raw[r.index:])
-	r.index += r.currWidth
-	return r.curr, r.currWidth
+	s.prev = s.curr
+	s.prevWidth = s.currWidth
+	s.curr, s.currWidth = utf8.DecodeRune(s.raw[s.index:])
+	s.index += s.currWidth
+	return s.curr, s.currWidth
 }
 
-func (r *runeStream) peek() (char rune, width int) {
-	if r.isAtEnd() {
+func (s *scanner) peek() (char rune, width int) {
+	if s.isAtEnd() {
 		return
 	}
 
-	return utf8.DecodeRune(r.raw[r.index:])
+	return utf8.DecodeRune(s.raw[s.index:])
 }
 
-func (r *runeStream) match(char rune) bool {
-	if r.isAtEnd() {
+func (s *scanner) match(char rune) bool {
+	if s.isAtEnd() {
 		return false
 	}
 
-	next, _ := r.peek()
+	next, _ := s.peek()
 	return next == char
 }
 
-func (r *runeStream) current() (char rune, width int) {
-	return r.curr, r.currWidth
+func (s *scanner) current() (char rune, width int) {
+	return s.curr, s.currWidth
 }
 
-func (r *runeStream) currentBytes() []byte {
-	i := r.index
-	h := i - r.currWidth
-	return r.raw[h:i]
+func (s *scanner) currentBytes() []byte {
+	i := s.index
+	h := i - s.currWidth
+	return s.raw[h:i]
 }
 
-func (r *runeStream) previous() (char rune, width int) {
-	return r.prev, r.prevWidth
+func (s *scanner) previous() (char rune, width int) {
+	return s.prev, s.prevWidth
 }
 
-func (r *runeStream) isAtEnd() bool {
-	return r.index >= len(r.raw)
+func (s *scanner) isAtEnd() bool {
+	return s.index >= len(s.raw)
 }
 
-func (r *runeStream) isEmpty() bool {
-	return len(r.raw) == 0
+func (s *scanner) isEmpty() bool {
+	return len(s.raw) == 0
 }
 
-func newRuneStream(raw []byte) *runeStream {
-	return &runeStream{raw: raw}
+func newScanner(raw []byte) *scanner {
+	return &scanner{raw: raw}
 }
 
 type inlineParser struct {
-	input      *runeStream
+	scanner    *scanner
 	buf        []byte
 	delimiters []delimiter
 	nodes      []InlineNode
@@ -83,13 +83,13 @@ type inlineParser struct {
 
 func (i *inlineParser) parse() []InlineNode {
 	// Special case: an empty input yields one empty text node.
-	if i.input.isEmpty() {
-		i.push(&Text{Content: i.input.raw})
+	if i.scanner.isEmpty() {
+		i.push(&Text{Content: i.scanner.raw})
 		return i.nodes
 	}
 
-	for !i.input.isAtEnd() {
-		char, width := i.input.advance()
+	for !i.scanner.isAtEnd() {
+		char, width := i.scanner.advance()
 
 		switch char {
 		case '_':
@@ -129,7 +129,7 @@ func (i *inlineParser) handleEmphasis(literal string, produce func(children []In
 		}
 	}
 
-	i.push(&Text{Content: i.input.currentBytes()})
+	i.push(&Text{Content: i.scanner.currentBytes()})
 	if canOpen {
 		i.delimiters = append(i.delimiters, delimiter{
 			literal: literal,
@@ -149,8 +149,8 @@ func (i *inlineParser) matchDelimiter(pattern string) (index int, delim delimite
 }
 
 func (i *inlineParser) detectWhitespace() (spaceBefore bool, spaceAfter bool) {
-	prev, _ := i.input.previous()
-	next, _ := i.input.peek()
+	prev, _ := i.scanner.previous()
+	next, _ := i.scanner.peek()
 
 	return unicode.IsSpace(prev), unicode.IsSpace(next)
 }
@@ -165,7 +165,7 @@ func (i *inlineParser) commitBuffer() (committed bool) {
 		committed = true
 	}
 
-	i.buf = i.input.raw[i.input.index:i.input.index]
+	i.buf = i.scanner.raw[i.scanner.index:i.scanner.index]
 	return committed
 }
 
@@ -175,8 +175,8 @@ func (i *inlineParser) push(node InlineNode) {
 
 func newInlineParser(text []byte) *inlineParser {
 	return &inlineParser{
-		input: newRuneStream(text),
-		buf:   text[0:0],
+		scanner: newScanner(text),
+		buf:     text[0:0],
 	}
 }
 
