@@ -47,6 +47,10 @@ func (s *scanner) match(char rune) bool {
 	return next == char
 }
 
+func (s *scanner) cursor() []byte {
+	return s.raw[s.index:s.index]
+}
+
 func (s *scanner) current() (char rune, width int) {
 	return s.curr, s.currWidth
 }
@@ -100,17 +104,20 @@ func (i *inlineParser) parse() []InlineNode {
 			i.handleEmphasis("*", func(children []InlineNode) InlineNode {
 				return &StrongEmphasis{Children: children}
 			})
+		case '`':
+			i.handleCode()
 		default:
 			i.growBuffer(width)
 		}
 	}
 
-	i.commitBuffer()
+	i.flushText()
 	return i.nodes
 }
 
 func (i *inlineParser) handleEmphasis(literal string, produce func(children []InlineNode) InlineNode) {
-	i.commitBuffer()
+	i.flushText()
+	i.resetBuffer()
 
 	spaceBefore, spaceAfter := i.detectWhitespace()
 	canClose := !spaceBefore
@@ -155,18 +162,59 @@ func (i *inlineParser) detectWhitespace() (spaceBefore bool, spaceAfter bool) {
 	return unicode.IsSpace(prev), unicode.IsSpace(next)
 }
 
+func (i *inlineParser) handleCode() {
+	i.flushText()
+
+	// Minimum of one ` character needed to close the code span.
+	minBackticks := 1
+	for i.scanner.match('`') {
+		i.scanner.advance()
+		minBackticks++
+	}
+
+	i.resetBuffer()
+
+	for !i.scanner.isAtEnd() {
+		char, size := i.scanner.advance()
+		if char == '`' {
+			// Once we hit a backtick, scan up to `minBackticks` number of backtick
+			// characters.
+			numBackticks := 1
+			for i.scanner.match('`') && numBackticks < minBackticks {
+				i.scanner.advance()
+				numBackticks++
+			}
+
+			if numBackticks == minBackticks {
+				// We found the end of the code span, stop this scanning loop.
+				break
+			} else {
+				// We didn't find the required number of backticks, so add them to the code
+				// buffer instead.
+				i.growBuffer(numBackticks)
+			}
+		} else {
+			// Every other character is added to the code buffer.
+			i.growBuffer(size)
+		}
+	}
+
+	i.push(&Code{Raw: i.buf})
+	i.resetBuffer()
+}
+
 func (i *inlineParser) growBuffer(n int) {
 	i.buf = i.buf[:len(i.buf)+n]
 }
 
-func (i *inlineParser) commitBuffer() (committed bool) {
+func (i *inlineParser) resetBuffer() {
+	i.buf = i.scanner.cursor()
+}
+
+func (i *inlineParser) flushText() {
 	if len(i.buf) > 0 {
 		i.push(&Text{Content: i.buf})
-		committed = true
 	}
-
-	i.buf = i.scanner.raw[i.scanner.index:i.scanner.index]
-	return committed
 }
 
 func (i *inlineParser) push(node InlineNode) {
@@ -174,9 +222,10 @@ func (i *inlineParser) push(node InlineNode) {
 }
 
 func newInlineParser(text []byte) *inlineParser {
+	scanner := newScanner(text)
 	return &inlineParser{
-		scanner: newScanner(text),
-		buf:     text[0:0],
+		scanner: scanner,
+		buf:     scanner.cursor(),
 	}
 }
 

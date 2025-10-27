@@ -1,0 +1,10 @@
+This paragraph contains `code`.
+
+Code can be ``delimited by multiple ` characters``.
+
+`Code terminates at
+the end of the block
+
+`No *formatting* or backslash escapes (\*) in code`
+
+Not code

@@ -1,0 +1,15 @@
+document
+	paragraph
+		text content="This paragraph contains "
+		code raw="code"
+		text content="."
+	paragraph
+		text content="Code can be "
+		code raw="delimited by multiple ` characters"
+		text content="."
+	paragraph
+		code raw="Code terminates at\nthe end of the block"
+	paragraph
+		code raw="No *formatting* or backslash escapes (\\*) in code"
+	paragraph
+		text content="Not code"
