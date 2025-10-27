@@ -1,0 +1,9 @@
+document
+	paragraph
+		text content="This is a "
+		link target="https://example.com"
+			text content="link"
+	paragraph
+		text content="The "
+		link target="doesn't have to be a URL"
+			text content="target"

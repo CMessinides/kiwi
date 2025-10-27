@@ -1,0 +1,5 @@
+document
+	paragraph
+		text content="[Not a link] (example.com)"
+	paragraph
+		text content="[Also not a link](example.com"

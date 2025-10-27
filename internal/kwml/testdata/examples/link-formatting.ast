@@ -1,0 +1,8 @@
+document
+	paragraph
+		link target="https://example.com"
+			text content="Links "
+			emphasis
+				text content="can"
+			text content=" contain "
+			code raw="formatting"

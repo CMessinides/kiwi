@@ -4,6 +4,14 @@ import (
 	"io"
 )
 
+func parseInlines(doc *Document) {
+	Walk(doc, &inlineVisitor{})
+}
+
+func normalize(doc *Document) {
+	Walk(doc, &normalizer{})
+}
+
 func Parse(r io.Reader) (doc *Document, err error) {
 	b := newBlockParser(r)
 	doc, err = b.parse()
@@ -11,11 +19,8 @@ func Parse(r io.Reader) (doc *Document, err error) {
 		return nil, err
 	}
 
-	i := &inlineVisitor{}
-	Walk(doc, i)
-
-	n := &normalizer{}
-	Walk(doc, n)
+	parseInlines(doc)
+	normalize(doc)
 
 	return doc, nil
 }

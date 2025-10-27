@@ -2,11 +2,13 @@ package kwml
 
 import (
 	"slices"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 )
 
 type delimiter struct {
+	active  bool
 	literal string
 	node    int
 }
@@ -80,7 +82,7 @@ func newScanner(raw []byte) *scanner {
 type inlineParser struct {
 	scanner    *scanner
 	buf        []byte
-	delimiters []delimiter
+	delimiters []*delimiter
 	nodes      []InlineNode
 	inVerbatim bool
 }
@@ -106,6 +108,10 @@ func (i *inlineParser) parse() []InlineNode {
 			})
 		case '`':
 			i.handleCode()
+		case '[':
+			i.handleOpenBracket()
+		case ']':
+			i.handleCloseBracket()
 		default:
 			i.growBuffer(width)
 		}
@@ -138,21 +144,30 @@ func (i *inlineParser) handleEmphasis(literal string, produce func(children []In
 
 	i.push(&Text{Content: i.scanner.currentBytes()})
 	if canOpen {
-		i.delimiters = append(i.delimiters, delimiter{
+		i.delimiters = append(i.delimiters, &delimiter{
+			active:  true,
 			literal: literal,
 			node:    len(i.nodes) - 1,
 		})
 	}
 }
 
-func (i *inlineParser) matchDelimiter(pattern string) (index int, delim delimiter) {
+func (i *inlineParser) matchDelimiter(pattern string) (index int, delim *delimiter) {
 	for index, delim = range slices.Backward(i.delimiters) {
-		if delim.literal == pattern {
+		if delim.active && delim.literal == pattern {
 			return index, delim
 		}
 	}
 
 	return -1, delim
+}
+
+func (i *inlineParser) deactivateDelimiters(pattern string) {
+	for _, delim := range i.delimiters {
+		if delim.literal == pattern {
+			delim.active = false
+		}
+	}
 }
 
 func (i *inlineParser) detectWhitespace() (spaceBefore bool, spaceAfter bool) {
@@ -203,6 +218,86 @@ func (i *inlineParser) handleCode() {
 	i.resetBuffer()
 }
 
+func (i *inlineParser) handleOpenBracket() {
+	i.flushText()
+	i.resetBuffer()
+	i.deactivateDelimiters("[")
+
+	i.push(&Text{
+		Content: i.scanner.currentBytes(),
+	})
+	i.delimiters = append(i.delimiters, &delimiter{
+		active:  true,
+		literal: "[",
+		node:    len(i.nodes) - 1,
+	})
+}
+
+func (i *inlineParser) handleCloseBracket() {
+	// Mark the start point in case we discover this is an invalid link and need
+	// to interpret all the scanned characters as text.
+	start := i.scanner.index - 1
+
+	if !i.scanner.match('(') {
+		// Closing bracket wasn't followed by a target, just consume it
+		// and move on.
+		i.growBuffer(1)
+		return
+	}
+
+	// Consume '('
+	i.scanner.advance()
+
+	idx, delim := i.matchDelimiter("[")
+	if idx == -1 {
+		// No matching delimiter, consume the "](" and move on.
+		i.growBuffer(2)
+		return
+	}
+
+	target := new(strings.Builder)
+	valid := false
+scanLoop:
+	for !i.scanner.isAtEnd() {
+		char, _ := i.scanner.advance()
+
+		switch char {
+		case '\\':
+			if next, _ := i.scanner.peek(); canBackslashEscape(next) {
+				i.scanner.advance()
+				target.WriteRune(next)
+			} else {
+				target.WriteRune(char)
+			}
+		case '\n':
+			break scanLoop
+		case ')':
+			valid = true
+			break scanLoop
+		default:
+			target.WriteRune(char)
+		}
+	}
+
+	if !valid {
+		// Invalid link, consume everything we scanned as plain text and move on.
+		i.growBuffer(i.scanner.index - start)
+		return
+	}
+
+	i.flushText()
+	c := i.nodes[delim.node+1:]
+	link := &Link{
+		Target:   target.String(),
+		Children: make([]InlineNode, len(c)),
+	}
+	copy(link.Children, c)
+
+	i.nodes = append(i.nodes[:delim.node], link)
+	i.delimiters = i.delimiters[:idx]
+	i.resetBuffer()
+}
+
 func (i *inlineParser) growBuffer(n int) {
 	i.buf = i.buf[:len(i.buf)+n]
 }
@@ -227,6 +322,10 @@ func newInlineParser(text []byte) *inlineParser {
 		scanner: scanner,
 		buf:     scanner.cursor(),
 	}
+}
+
+func canBackslashEscape(char rune) bool {
+	return char <= unicode.MaxASCII && unicode.IsPunct(char)
 }
 
 type inlineVisitor struct {
