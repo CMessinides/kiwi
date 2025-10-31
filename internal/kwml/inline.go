@@ -1,286 +1,377 @@
 package kwml
 
 import (
+	"fmt"
+	"regexp"
 	"slices"
-	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
-type delimiter struct {
+type tag int
+
+const (
+	tagStr tag = iota
+	tagOpenEmph
+	tagCloseEmph
+	tagOpenStrong
+	tagCloseStrong
+	tagOpenImageText
+	tagCloseImageText
+	tagOpenLinkText
+	tagCloseLinkText
+	tagOpenDest
+	tagCloseDest
+	tagOpenWikiLink
+	tagCloseWikiLink
+)
+
+func (t tag) String() string {
+	switch t {
+	case tagStr:
+		return "str"
+	case tagOpenEmph:
+		return "open_emph"
+	case tagCloseEmph:
+		return "close_emph"
+	case tagOpenStrong:
+		return "open_strong"
+	case tagCloseStrong:
+		return "close_strong"
+	case tagOpenImageText:
+		return "open_image_text"
+	case tagCloseImageText:
+		return "close_image_text"
+	case tagOpenLinkText:
+		return "open_link_text"
+	case tagCloseLinkText:
+		return "close_link_text"
+	case tagOpenDest:
+		return "open_dest"
+	case tagCloseDest:
+		return "close_dest"
+	case tagOpenWikiLink:
+		return "open_wiki_link"
+	case tagCloseWikiLink:
+		return "close_wiki_link"
+	default:
+		return "unknown"
+	}
+}
+
+type annotation struct {
+	tag        tag
+	start, end int
+}
+
+func newAnnotation(tag tag, start int, end int) *annotation {
+	return &annotation{
+		tag:   tag,
+		start: start,
+		end:   end,
+	}
+}
+
+type opener interface {
+	isBetween(start int, end int) bool
+	isActive() bool
+	deactivate()
+}
+
+type balancedOpener struct {
 	active  bool
 	literal string
-	node    int
+	index   int
+	annot   *annotation
+}
+
+func openBalanced(literal string, index int, annot *annotation) *balancedOpener {
+	return &balancedOpener{
+		active:  true,
+		literal: literal,
+		index:   index,
+		annot:   annot,
+	}
+}
+
+type linkishOpener struct {
+	active     bool
+	literal    string
+	startIndex int
+	startAnnot *annotation
+	midIndex   int
+	midAnnot   *annotation
+}
+
+func openLinkish(literal string, index int, annot *annotation) *linkishOpener {
+	return &linkishOpener{
+		active:     true,
+		literal:    literal,
+		startIndex: index,
+		startAnnot: annot,
+		midIndex:   -1,
+		midAnnot:   nil,
+	}
+}
+
+// Implement [opener] for all concrete opener types.
+
+func (b *balancedOpener) isActive() bool { return b.active }
+func (b *balancedOpener) deactivate()    { b.active = false }
+
+func (b *balancedOpener) isBetween(start int, end int) bool {
+	return b.annot.start >= start && b.annot.end <= end
+}
+
+func (l *linkishOpener) isActive() bool { return l.active }
+func (l *linkishOpener) deactivate()    { l.active = false }
+
+func (l *linkishOpener) isBetween(start int, end int) bool {
+	startBetween := l.startAnnot.start >= start && l.startAnnot.end <= end
+
+	if l.midAnnot == nil {
+		return startBetween
+	} else {
+		midBetween := l.midAnnot.start >= start && l.midAnnot.end <= end
+		return startBetween || midBetween
+	}
 }
 
 type inlineParser struct {
-	scanner    *scanner
-	buf        []byte
-	delimiters []*delimiter
-	nodes      []InlineNode
-	inVerbatim bool
+	raw         []byte
+	annotations []*annotation
+	openers     []opener
 }
 
-func (i *inlineParser) parse() []InlineNode {
-	// Special case: an empty input yields one empty text node.
-	if i.scanner.isEmpty() {
-		i.push(&Text{Content: i.scanner.raw})
-		return i.nodes
+var reSpecialChar = regexp.MustCompile(`[*_()![\]\x60\n]`)
+
+func (i *inlineParser) parse(text []byte) {
+	i.reset(text)
+
+	if len(i.raw) == 0 {
+		// Special case: an empty input yields one empty text node.
+		i.insertAnnotation(tagStr, 0, 0)
+		return
 	}
 
-	for !i.scanner.isAtEnd() {
-		char, width := i.scanner.advance()
+	pos := 0
+	endpos := len(i.raw)
+	for pos < endpos {
+		spMatch := reSpecialChar.FindIndex(i.raw[pos:])
 
-		switch char {
-		case '_':
-			i.handleEmphasis("_", func(children []InlineNode) InlineNode {
-				return &Emphasis{Children: children}
-			})
-		case '*':
-			i.handleEmphasis("*", func(children []InlineNode) InlineNode {
-				return &StrongEmphasis{Children: children}
-			})
-		case '`':
-			i.handleCode()
-		case '[':
-			i.handleOpenBracket()
-		case ']':
-			i.handleCloseBracket()
-		default:
-			i.growBuffer(width)
+		if spMatch == nil {
+			// No more special characters, skip to end.
+			i.insertAnnotation(tagStr, pos, endpos)
+			break
 		}
-	}
 
-	i.flushText()
-	return i.nodes
-}
+		// At this point, we've found a special char.
+		start := pos + spMatch[0]
+		end := pos + spMatch[1]
 
-func (i *inlineParser) handleEmphasis(literal string, produce func(children []InlineNode) InlineNode) {
-	i.flushText()
-	i.resetBuffer()
-
-	spaceBefore, spaceAfter := i.detectWhitespace()
-	canClose := !spaceBefore
-	canOpen := !spaceAfter
-
-	if canClose {
-		if idx, delim := i.matchDelimiter(literal); idx != -1 {
-			if c := i.nodes[delim.node+1:]; len(c) > 0 {
-				children := make([]InlineNode, len(c))
-				copy(children, c)
-
-				i.nodes = append(i.nodes[:delim.node], produce(children))
-				i.delimiters = i.delimiters[:idx]
-				return
-			}
+		if start > pos {
+			// Insert any leading text before the special character.
+			i.insertAnnotation(tagStr, pos, start)
+			pos = start
 		}
-	}
 
-	i.push(&Text{Content: i.scanner.currentBytes()})
-	if canOpen {
-		i.delimiters = append(i.delimiters, &delimiter{
-			active:  true,
-			literal: literal,
-			node:    len(i.nodes) - 1,
-		})
-	}
-}
-
-func (i *inlineParser) matchDelimiter(pattern string) (index int, delim *delimiter) {
-	for index, delim = range slices.Backward(i.delimiters) {
-		if delim.active && delim.literal == pattern {
-			return index, delim
-		}
-	}
-
-	return -1, delim
-}
-
-func (i *inlineParser) deactivateDelimiters(pattern string) {
-	for _, delim := range i.delimiters {
-		if delim.literal == pattern {
-			delim.active = false
-		}
-	}
-}
-
-func (i *inlineParser) detectWhitespace() (spaceBefore bool, spaceAfter bool) {
-	prev, _ := i.scanner.previous()
-	next, _ := i.scanner.peek()
-
-	return unicode.IsSpace(prev), unicode.IsSpace(next)
-}
-
-func (i *inlineParser) handleCode() {
-	i.flushText()
-
-	// Minimum of one ` character needed to close the code span.
-	minBackticks := 1
-	for i.scanner.match('`') {
-		i.scanner.advance()
-		minBackticks++
-	}
-
-	i.resetBuffer()
-
-	for !i.scanner.isAtEnd() {
-		char, size := i.scanner.advance()
-		if char == '`' {
-			// Once we hit a backtick, scan up to `minBackticks` number of backtick
-			// characters.
-			numBackticks := 1
-			for i.scanner.match('`') && numBackticks < minBackticks {
-				i.scanner.advance()
-				numBackticks++
-			}
-
-			if numBackticks == minBackticks {
-				// We found the end of the code span, stop this scanning loop.
-				break
+		switch char := string(i.raw[start:end]); char {
+		case "*", "_":
+			var openTag, closeTag tag
+			if char == "_" {
+				openTag = tagOpenEmph
+				closeTag = tagCloseEmph
 			} else {
-				// We didn't find the required number of backticks, so add them to the code
-				// buffer instead.
-				i.growBuffer(numBackticks)
+				openTag = tagOpenStrong
+				closeTag = tagCloseStrong
 			}
-		} else {
-			// Every other character is added to the code buffer.
-			i.growBuffer(size)
-		}
-	}
 
-	i.push(&Code{Raw: i.buf})
-	i.resetBuffer()
-}
+			prevChar, _ := utf8.DecodeLastRune(i.raw[:start])
+			nextChar, _ := utf8.DecodeRune(i.raw[end:])
 
-func (i *inlineParser) handleOpenBracket() {
-	i.flushText()
-	i.resetBuffer()
-	i.deactivateDelimiters("[")
+			canClose := !unicode.IsSpace(prevChar)
+			canOpen := !unicode.IsSpace(nextChar)
 
-	i.push(&Text{
-		Content: i.scanner.currentBytes(),
-	})
-	i.delimiters = append(i.delimiters, &delimiter{
-		active:  true,
-		literal: "[",
-		node:    len(i.nodes) - 1,
-	})
-}
-
-func (i *inlineParser) handleCloseBracket() {
-	// Mark the start point in case we discover this is an invalid link and need
-	// to interpret all the scanned characters as text.
-	start := i.scanner.index - 1
-
-	if !i.scanner.match('(') {
-		// Closing bracket wasn't followed by a target, just consume it
-		// and move on.
-		i.growBuffer(1)
-		return
-	}
-
-	// Consume '('
-	i.scanner.advance()
-
-	idx, delim := i.matchDelimiter("[")
-	if idx == -1 {
-		// No matching delimiter, consume the "](" and move on.
-		i.growBuffer(2)
-		return
-	}
-
-	target := new(strings.Builder)
-	valid := false
-scanLoop:
-	for !i.scanner.isAtEnd() {
-		char, _ := i.scanner.advance()
-
-		switch char {
-		case '\\':
-			if next, _ := i.scanner.peek(); canBackslashEscape(next) {
-				i.scanner.advance()
-				target.WriteRune(next)
-			} else {
-				target.WriteRune(char)
+			if canClose {
+				if _, o := i.matchBalancedOpener(char); o != nil {
+					zeroLength := o.annot.end == start
+					if !zeroLength {
+						o.deactivate()
+						o.annot.tag = openTag
+						c := i.insertAnnotation(closeTag, start, end)
+						i.invalidateOpenersBetween(o.annot, c)
+						pos = end
+						continue
+					}
+				}
 			}
-		case '\n':
-			break scanLoop
-		case ')':
-			valid = true
-			break scanLoop
+
+			index := len(i.annotations)
+			annot := i.insertAnnotation(tagStr, start, end)
+			if canOpen {
+				i.pushOpener(openBalanced(char, index, annot))
+			}
+			pos = end
 		default:
-			target.WriteRune(char)
+			i.insertAnnotation(tagStr, start, end)
+			pos = end
+		}
+	}
+}
+
+func (i *inlineParser) pushOpener(o opener) {
+	i.openers = append(i.openers, o)
+}
+
+func (i *inlineParser) matchBalancedOpener(literal string) (index int, opener *balancedOpener) {
+	for i, o := range slices.Backward(i.openers) {
+		if o.isActive() {
+			if b, ok := o.(*balancedOpener); ok {
+				if b.literal == literal {
+					return i, b
+				}
+			}
 		}
 	}
 
-	if !valid {
-		// Invalid link, consume everything we scanned as plain text and move on.
-		i.growBuffer(i.scanner.index - start)
-		return
-	}
-
-	i.flushText()
-	c := i.nodes[delim.node+1:]
-	link := &Link{
-		Target:   target.String(),
-		Children: make([]InlineNode, len(c)),
-	}
-	copy(link.Children, c)
-
-	i.nodes = append(i.nodes[:delim.node], link)
-	i.delimiters = i.delimiters[:idx]
-	i.resetBuffer()
+	return -1, nil
 }
 
-func (i *inlineParser) growBuffer(n int) {
-	i.buf = i.buf[:len(i.buf)+n]
-}
+func (i *inlineParser) invalidateOpenersBetween(from *annotation, to *annotation) {
+	for _, o := range i.openers {
+		if !o.isActive() {
+			continue
+		}
 
-func (i *inlineParser) resetBuffer() {
-	i.buf = i.scanner.cursor()
-}
-
-func (i *inlineParser) flushText() {
-	if len(i.buf) > 0 {
-		i.push(&Text{Content: i.buf})
+		if o.isBetween(from.end, to.start) {
+			o.deactivate()
+		}
 	}
 }
 
-func (i *inlineParser) push(node InlineNode) {
-	i.nodes = append(i.nodes, node)
+func (i *inlineParser) insertAnnotation(tag tag, start int, end int) *annotation {
+	annot := newAnnotation(tag, start, end)
+	i.annotations = append(i.annotations, annot)
+	return annot
 }
 
-func newInlineParser(text []byte) *inlineParser {
-	scanner := newScanner(text)
-	return &inlineParser{
-		scanner: scanner,
-		buf:     scanner.cursor(),
+func (i *inlineParser) nodes() []InlineNode {
+	fmt.Printf("text: %s\n", i.raw)
+	for idx, a := range i.annotations {
+		fmt.Printf("  annotations[%3d] = %12s(%3d,%3d) %q\n", idx, a.tag, a.start, a.end, string(i.raw[a.start:a.end]))
 	}
+	nodes, rem := toNodes(i.raw, i.annotations)
+	if len(rem) != 0 {
+		panic(fmt.Sprintf("expected no remaining annotations; got %d", len(rem)))
+	}
+
+	return nodes
+}
+
+func (i *inlineParser) reset(raw []byte) {
+	i.raw = raw
+	i.annotations = nil
+	i.openers = nil
+}
+
+func (i *inlineParser) StartVisit(node Node) (v Visitor) {
+	if t, ok := node.(*Text); ok {
+		i.parse(t.Content)
+		return nil
+	} else {
+		return i
+	}
+}
+
+func (i *inlineParser) EndVisit(node Node) {
+	// The first and only child of each heading and paragraph is a [Text] node
+	// that will have been parsed in [inlineParser.StartVisit].
+	switch v := node.(type) {
+	case *Heading:
+		v.Children = i.nodes()
+	case *Paragraph:
+		v.Children = i.nodes()
+	}
+}
+
+func newInlineParser() *inlineParser {
+	return &inlineParser{}
 }
 
 func canBackslashEscape(char rune) bool {
 	return char <= unicode.MaxASCII && unicode.IsPunct(char)
 }
 
-type inlineVisitor struct {
-	spans []InlineNode
-}
+func toNodes(raw []byte, annotations []*annotation) (nodes []InlineNode, rem []*annotation) {
+	rem = annotations
 
-func (i *inlineVisitor) StartVisit(node Node) (v Visitor) {
-	if t, ok := node.(*Text); ok {
-		i.spans = newInlineParser(t.Content).parse()
-		return nil
+	for len(rem) > 0 {
+		fmt.Printf("toNodes(): %d remaining\n", len(rem))
+		for i, a := range rem {
+			fmt.Printf("  rem[%3d] = %12s(%3d,%3d) %q\n", i, a.tag, a.start, a.end, raw[a.start:a.end])
+		}
+		switch rem[0].tag {
+		case tagStr:
+			var txt *Text
+			txt, rem = toText(raw, rem)
+			nodes = append(nodes, txt)
+		case tagOpenEmph:
+			var emph *Emphasis
+			emph, rem = toEmphasis(raw, rem[1:])
+			nodes = append(nodes, emph)
+		case tagOpenStrong:
+			var strong *StrongEmphasis
+			strong, rem = toStrong(raw, rem[1:])
+			nodes = append(nodes, strong)
+		case tagCloseEmph, tagCloseStrong:
+			return nodes, rem
+		default:
+			panic(fmt.Sprintf("unexpected annotation: %s", rem[0].tag))
+		}
 	}
 
-	return i
+	return nodes, rem
 }
 
-func (i *inlineVisitor) EndVisit(node Node) {
-	// The first and only child of each heading and paragraph is a [Text] node
-	// that will have been parsed into `spans` in [inlineVisitor.StartVisit].
-	switch v := node.(type) {
-	case *Heading:
-		v.Children = i.spans
-	case *Paragraph:
-		v.Children = i.spans
+func toText(raw []byte, annotations []*annotation) (txt *Text, rem []*annotation) {
+	start := annotations[0].start
+	end := annotations[0].end
+
+	for i := 1; i < len(annotations); i++ {
+		annot := annotations[i]
+		if annot.tag == tagStr {
+			end = annot.end
+		} else {
+			rem = annotations[i:]
+			break
+		}
 	}
+
+	return &Text{
+		Content: raw[start:end],
+	}, rem
+}
+
+func toEmphasis(raw []byte, annotations []*annotation) (emph *Emphasis, rem []*annotation) {
+	children, rem := toNodesUntil(tagCloseEmph, raw, annotations)
+	return &Emphasis{Children: children}, rem
+}
+
+func toStrong(raw []byte, annotations []*annotation) (emph *StrongEmphasis, rem []*annotation) {
+	children, rem := toNodesUntil(tagCloseStrong, raw, annotations)
+	return &StrongEmphasis{Children: children}, rem
+}
+
+func toNodesUntil(closer tag, raw []byte, annotations []*annotation) (nodes []InlineNode, rem []*annotation) {
+	nodes, rem = toNodes(raw, annotations)
+
+	if len(rem) == 0 {
+		panic(fmt.Sprintf("unclosed span: expected %s, got nil", closer))
+	}
+
+	if rem[0].tag != closer {
+		panic(fmt.Sprintf("unclosed span: expected %s, got: %s", closer, rem[0].tag))
+	}
+
+	return nodes, rem[1:]
 }
