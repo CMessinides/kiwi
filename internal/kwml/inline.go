@@ -16,6 +16,8 @@ const (
 	tagCloseEmph
 	tagOpenStrong
 	tagCloseStrong
+	tagOpenCode
+	tagCloseCode
 	tagOpenImageText
 	tagCloseImageText
 	tagOpenLinkText
@@ -143,7 +145,85 @@ type inlineParser struct {
 	openers     []opener
 }
 
-var reSpecialChar = regexp.MustCompile(`[*_()![\]\x60\n]`)
+var (
+	reSpecialChar      = regexp.MustCompile(`[*_()![\]\x60\n]`)
+	reBackticks        = regexp.MustCompile(`\x60+`)
+	reLeadingBackticks = regexp.MustCompile(`^\x60+`)
+)
+
+type matcher func(parser *inlineParser, start, end int) (pos int)
+
+func emphasisMatcher(literal string, openTag tag, closeTag tag) matcher {
+	return func(parser *inlineParser, start, end int) (pos int) {
+		prevChar, _ := utf8.DecodeLastRune(parser.raw[:start])
+		nextChar, _ := utf8.DecodeRune(parser.raw[end:])
+
+		canClose := !unicode.IsSpace(prevChar)
+		canOpen := !unicode.IsSpace(nextChar)
+
+		if canClose {
+			if _, o := parser.matchBalancedOpener(literal); o != nil {
+				zeroLength := o.annot.end == start
+				if !zeroLength {
+					o.deactivate()
+					o.annot.tag = openTag
+					c := parser.insertAnnotation(closeTag, start, end)
+					parser.invalidateOpenersBetween(o.annot, c)
+					return end
+				}
+			}
+		}
+
+		index := len(parser.annotations)
+		annot := parser.insertAnnotation(tagStr, start, end)
+		if canOpen {
+			parser.pushOpener(openBalanced(literal, index, annot))
+		}
+		return end
+	}
+}
+
+var (
+	matchUnderscore matcher = emphasisMatcher("_", tagOpenEmph, tagCloseEmph)
+	matchStar               = emphasisMatcher("*", tagOpenStrong, tagCloseStrong)
+
+	matchBacktick = func(parser *inlineParser, start, end int) (pos int) {
+		backticks := reLeadingBackticks.FindIndex(parser.raw[start:])
+		count := backticks[1] - backticks[0]
+		end += count - 1
+		parser.insertAnnotation(tagOpenCode, start, end)
+
+		start = end
+		for end < len(parser.raw) {
+			delim := reBackticks.FindIndex(parser.raw[end:])
+			if delim == nil {
+				end = len(parser.raw)
+				parser.insertAnnotation(tagStr, start, end)
+				parser.insertAnnotation(tagCloseCode, end, end)
+				break
+			}
+
+			end += delim[0]
+			n := delim[1] - delim[0]
+			if n == count {
+				parser.insertAnnotation(tagStr, start, end)
+				start, end = end, end+n
+				parser.insertAnnotation(tagCloseCode, start, end)
+				break
+			} else {
+				end += n
+			}
+		}
+
+		return end
+	}
+)
+
+var matchers = map[string]matcher{
+	"_": matchUnderscore,
+	"*": matchStar,
+	"`": matchBacktick,
+}
 
 func (i *inlineParser) parse(text []byte) {
 	i.reset(text)
@@ -157,17 +237,17 @@ func (i *inlineParser) parse(text []byte) {
 	pos := 0
 	endpos := len(i.raw)
 	for pos < endpos {
-		spMatch := reSpecialChar.FindIndex(i.raw[pos:])
+		match := reSpecialChar.FindIndex(i.raw[pos:])
 
-		if spMatch == nil {
+		if match == nil {
 			// No more special characters, skip to end.
 			i.insertAnnotation(tagStr, pos, endpos)
 			break
 		}
 
 		// At this point, we've found a special char.
-		start := pos + spMatch[0]
-		end := pos + spMatch[1]
+		start := pos + match[0]
+		end := pos + match[1]
 
 		if start > pos {
 			// Insert any leading text before the special character.
@@ -175,44 +255,9 @@ func (i *inlineParser) parse(text []byte) {
 			pos = start
 		}
 
-		switch char := string(i.raw[start:end]); char {
-		case "*", "_":
-			var openTag, closeTag tag
-			if char == "_" {
-				openTag = tagOpenEmph
-				closeTag = tagCloseEmph
-			} else {
-				openTag = tagOpenStrong
-				closeTag = tagCloseStrong
-			}
-
-			prevChar, _ := utf8.DecodeLastRune(i.raw[:start])
-			nextChar, _ := utf8.DecodeRune(i.raw[end:])
-
-			canClose := !unicode.IsSpace(prevChar)
-			canOpen := !unicode.IsSpace(nextChar)
-
-			if canClose {
-				if _, o := i.matchBalancedOpener(char); o != nil {
-					zeroLength := o.annot.end == start
-					if !zeroLength {
-						o.deactivate()
-						o.annot.tag = openTag
-						c := i.insertAnnotation(closeTag, start, end)
-						i.invalidateOpenersBetween(o.annot, c)
-						pos = end
-						continue
-					}
-				}
-			}
-
-			index := len(i.annotations)
-			annot := i.insertAnnotation(tagStr, start, end)
-			if canOpen {
-				i.pushOpener(openBalanced(char, index, annot))
-			}
-			pos = end
-		default:
+		if matcher, ok := matchers[string(i.raw[start:end])]; ok {
+			pos = matcher(i, start, end)
+		} else {
 			i.insertAnnotation(tagStr, start, end)
 			pos = end
 		}
@@ -256,10 +301,6 @@ func (i *inlineParser) insertAnnotation(tag tag, start int, end int) *annotation
 }
 
 func (i *inlineParser) nodes() []InlineNode {
-	fmt.Printf("text: %s\n", i.raw)
-	for idx, a := range i.annotations {
-		fmt.Printf("  annotations[%3d] = %12s(%3d,%3d) %q\n", idx, a.tag, a.start, a.end, string(i.raw[a.start:a.end]))
-	}
 	nodes, rem := toNodes(i.raw, i.annotations)
 	if len(rem) != 0 {
 		panic(fmt.Sprintf("expected no remaining annotations; got %d", len(rem)))
@@ -306,10 +347,6 @@ func toNodes(raw []byte, annotations []*annotation) (nodes []InlineNode, rem []*
 	rem = annotations
 
 	for len(rem) > 0 {
-		fmt.Printf("toNodes(): %d remaining\n", len(rem))
-		for i, a := range rem {
-			fmt.Printf("  rem[%3d] = %12s(%3d,%3d) %q\n", i, a.tag, a.start, a.end, raw[a.start:a.end])
-		}
 		switch rem[0].tag {
 		case tagStr:
 			var txt *Text
@@ -323,7 +360,11 @@ func toNodes(raw []byte, annotations []*annotation) (nodes []InlineNode, rem []*
 			var strong *StrongEmphasis
 			strong, rem = toStrong(raw, rem[1:])
 			nodes = append(nodes, strong)
-		case tagCloseEmph, tagCloseStrong:
+		case tagOpenCode:
+			var code *Code
+			code, rem = toCode(raw, rem)
+			nodes = append(nodes, code)
+		case tagCloseEmph, tagCloseStrong, tagCloseCode:
 			return nodes, rem
 		default:
 			panic(fmt.Sprintf("unexpected annotation: %s", rem[0].tag))
@@ -334,22 +375,29 @@ func toNodes(raw []byte, annotations []*annotation) (nodes []InlineNode, rem []*
 }
 
 func toText(raw []byte, annotations []*annotation) (txt *Text, rem []*annotation) {
-	start := annotations[0].start
-	end := annotations[0].end
-
-	for i := 1; i < len(annotations); i++ {
-		annot := annotations[i]
+	start, end := annotations[0].start, annotations[0].end
+	for i, annot := range annotations {
 		if annot.tag == tagStr {
 			end = annot.end
 		} else {
-			rem = annotations[i:]
-			break
+			return &Text{Content: raw[start:end]}, annotations[i:]
 		}
 	}
 
-	return &Text{
-		Content: raw[start:end],
-	}, rem
+	return &Text{Content: raw[start:end]}, nil
+}
+
+func toCode(raw []byte, annotations []*annotation) (code *Code, rem []*annotation) {
+	start, end := annotations[0].end, annotations[0].end
+	for i, annot := range annotations {
+		if annot.tag != tagCloseCode {
+			end = annot.end
+		} else {
+			return &Code{Raw: raw[start:end]}, annotations[i+1:]
+		}
+	}
+
+	return &Code{Raw: raw[start:end]}, nil
 }
 
 func toEmphasis(raw []byte, annotations []*annotation) (emph *Emphasis, rem []*annotation) {
