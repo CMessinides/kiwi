@@ -40,6 +40,10 @@ func (t tag) String() string {
 		return "open_strong"
 	case tagCloseStrong:
 		return "close_strong"
+	case tagOpenCode:
+		return "open_code"
+	case tagCloseCode:
+		return "close_code"
 	case tagOpenImageText:
 		return "open_image_text"
 	case tagCloseImageText:
@@ -97,22 +101,33 @@ func openBalanced(literal string, index int, annot *annotation) *balancedOpener 
 }
 
 type linkishOpener struct {
-	active     bool
-	literal    string
-	startIndex int
-	startAnnot *annotation
-	midIndex   int
-	midAnnot   *annotation
+	active         bool
+	literal        string
+	startIndex     int
+	startAnnot     *annotation
+	midIndex       int
+	midAnnot       *annotation
+	textEndIndex   int
+	textEndAnnot   *annotation
+	destStartIndex int
+	destStartAnnot *annotation
 }
 
-func openLinkish(literal string, index int, annot *annotation) *linkishOpener {
+func openLinkish(
+	literal string,
+	startIndex int, startAnnot *annotation,
+	textEndIndex int, textEndAnnot *annotation,
+	destStartIndex int, destStartAnnot *annotation,
+) *linkishOpener {
 	return &linkishOpener{
-		active:     true,
-		literal:    literal,
-		startIndex: index,
-		startAnnot: annot,
-		midIndex:   -1,
-		midAnnot:   nil,
+		active:         true,
+		literal:        literal,
+		startIndex:     startIndex,
+		startAnnot:     startAnnot,
+		textEndIndex:   textEndIndex,
+		textEndAnnot:   textEndAnnot,
+		destStartIndex: destStartIndex,
+		destStartAnnot: destStartAnnot,
 	}
 }
 
@@ -184,45 +199,111 @@ func emphasisMatcher(literal string, openTag tag, closeTag tag) matcher {
 }
 
 var (
-	matchUnderscore matcher = emphasisMatcher("_", tagOpenEmph, tagCloseEmph)
-	matchStar               = emphasisMatcher("*", tagOpenStrong, tagCloseStrong)
+	matchUnderscore = emphasisMatcher("_", tagOpenEmph, tagCloseEmph)
+	matchStar       = emphasisMatcher("*", tagOpenStrong, tagCloseStrong)
+)
 
-	matchBacktick = func(parser *inlineParser, start, end int) (pos int) {
-		backticks := reLeadingBackticks.FindIndex(parser.raw[start:])
-		count := backticks[1] - backticks[0]
-		end += count - 1
-		parser.insertAnnotation(tagOpenCode, start, end)
+var matchBacktick matcher = func(parser *inlineParser, start, end int) (pos int) {
+	backticks := reLeadingBackticks.FindIndex(parser.raw[start:])
+	count := backticks[1] - backticks[0]
+	end += count - 1
+	parser.insertAnnotation(tagOpenCode, start, end)
 
-		start = end
-		for end < len(parser.raw) {
-			delim := reBackticks.FindIndex(parser.raw[end:])
-			if delim == nil {
-				end = len(parser.raw)
-				parser.insertAnnotation(tagStr, start, end)
-				parser.insertAnnotation(tagCloseCode, end, end)
-				break
-			}
-
-			end += delim[0]
-			n := delim[1] - delim[0]
-			if n == count {
-				parser.insertAnnotation(tagStr, start, end)
-				start, end = end, end+n
-				parser.insertAnnotation(tagCloseCode, start, end)
-				break
-			} else {
-				end += n
-			}
+	start = end
+	for end < len(parser.raw) {
+		delim := reBackticks.FindIndex(parser.raw[end:])
+		if delim == nil {
+			end = len(parser.raw)
+			parser.insertAnnotation(tagStr, start, end)
+			parser.insertAnnotation(tagCloseCode, end, end)
+			break
 		}
 
-		return end
+		end += delim[0]
+		n := delim[1] - delim[0]
+		if n == count {
+			parser.insertAnnotation(tagStr, start, end)
+			start, end = end, end+n
+			parser.insertAnnotation(tagCloseCode, start, end)
+			break
+		} else {
+			end += n
+		}
 	}
-)
+
+	return end
+}
+
+var matchLeftBracket matcher = func(parser *inlineParser, start, end int) (pos int) {
+	index := len(parser.annotations)
+	annot := parser.insertAnnotation(tagStr, start, end)
+	parser.pushOpener(openBalanced("[", index, annot))
+	return end
+}
+
+var matchRightBracket matcher = func(parser *inlineParser, start, end int) (pos int) {
+	parser.insertAnnotation(tagStr, start, end) // "]"
+	if i, b := parser.matchBalancedOpener("["); b != nil {
+		nextChar, size := utf8.DecodeRune(parser.raw[end:])
+		if nextChar == '(' {
+			start = end
+			end = start + size
+			parser.insertAnnotation(tagStr, start, end) // "("
+
+			textEndIndex := len(parser.annotations) - 2
+			destStartIndex := textEndIndex + 1
+
+			parser.openers[i] = openLinkish(
+				b.literal,
+				b.index,
+				b.annot, // "["
+				textEndIndex,
+				parser.annotations[textEndIndex], // "]"
+				destStartIndex,
+				parser.annotations[destStartIndex], // "("
+			)
+		} else {
+			b.deactivate()
+		}
+	}
+
+	return end
+}
+
+var matchLeftParen matcher = func(parser *inlineParser, start, end int) (pos int) {
+	index := len(parser.annotations)
+	annot := parser.insertAnnotation(tagStr, start, end)
+	parser.pushOpener(openBalanced("(", index, annot))
+	return end
+}
+
+var matchRightParen matcher = func(parser *inlineParser, start, end int) (pos int) {
+	if _, b := parser.matchBalancedOpener("("); b != nil {
+		b.deactivate()
+		parser.insertAnnotation(tagStr, start, end)
+	} else if _, l := parser.matchLinkishOpener(); l != nil {
+		l.startAnnot.tag = tagOpenLinkText
+		l.textEndAnnot.tag = tagCloseLinkText
+		l.destStartAnnot.tag = tagOpenDest
+		destEndIndex := len(parser.annotations)
+		destEndAnnot := parser.insertAnnotation(tagCloseDest, start, end)
+
+		parser.invalidateOpenersBetween(l.startAnnot, l.textEndAnnot)
+		parser.invalidateOpenersBetween(l.destStartAnnot, destEndAnnot)
+		parser.stringifyAnnotationsBetween(l.destStartIndex+1, destEndIndex)
+	}
+
+	return end
+}
 
 var matchers = map[string]matcher{
 	"_": matchUnderscore,
 	"*": matchStar,
 	"`": matchBacktick,
+	"[": matchLeftBracket,
+	"]": matchRightBracket,
+	"(": matchLeftParen,
+	")": matchRightParen,
 }
 
 func (i *inlineParser) parse(text []byte) {
@@ -282,6 +363,18 @@ func (i *inlineParser) matchBalancedOpener(literal string) (index int, opener *b
 	return -1, nil
 }
 
+func (i *inlineParser) matchLinkishOpener() (index int, opener *linkishOpener) {
+	for i, o := range slices.Backward(i.openers) {
+		if o.isActive() {
+			if l, ok := o.(*linkishOpener); ok {
+				return i, l
+			}
+		}
+	}
+
+	return -1, nil
+}
+
 func (i *inlineParser) invalidateOpenersBetween(from *annotation, to *annotation) {
 	for _, o := range i.openers {
 		if !o.isActive() {
@@ -298,6 +391,12 @@ func (i *inlineParser) insertAnnotation(tag tag, start int, end int) *annotation
 	annot := newAnnotation(tag, start, end)
 	i.annotations = append(i.annotations, annot)
 	return annot
+}
+
+func (i *inlineParser) stringifyAnnotationsBetween(start, end int) {
+	for _, annot := range i.annotations[start:end] {
+		annot.tag = tagStr
+	}
 }
 
 func (i *inlineParser) nodes() []InlineNode {
@@ -364,7 +463,11 @@ func toNodes(raw []byte, annotations []*annotation) (nodes []InlineNode, rem []*
 			var code *Code
 			code, rem = toCode(raw, rem)
 			nodes = append(nodes, code)
-		case tagCloseEmph, tagCloseStrong, tagCloseCode:
+		case tagOpenLinkText:
+			var link *Link
+			link, rem = toLink(raw, rem[1:])
+			nodes = append(nodes, link)
+		case tagCloseEmph, tagCloseStrong, tagCloseCode, tagCloseLinkText:
 			return nodes, rem
 		default:
 			panic(fmt.Sprintf("unexpected annotation: %s", rem[0].tag))
@@ -410,16 +513,37 @@ func toStrong(raw []byte, annotations []*annotation) (emph *StrongEmphasis, rem 
 	return &StrongEmphasis{Children: children}, rem
 }
 
+func toLink(raw []byte, annotations []*annotation) (link *Link, rem []*annotation) {
+	children, rem := toNodesUntil(tagCloseLinkText, raw, annotations)
+	destStart, rem := consume(tagOpenDest, rem)
+
+	targetStart, targetEnd := destStart.end, destStart.end
+	for i, annot := range rem {
+		if annot.tag != tagCloseDest {
+			targetEnd = annot.end
+		} else {
+			return &Link{
+				Children: children,
+				Target:   string(raw[targetStart:targetEnd]),
+			}, rem[i+1:]
+		}
+	}
+
+	panic(fmt.Sprintf("unclosed link target: expected %s, got nil", tagCloseDest))
+}
+
 func toNodesUntil(closer tag, raw []byte, annotations []*annotation) (nodes []InlineNode, rem []*annotation) {
 	nodes, rem = toNodes(raw, annotations)
+	_, rem = consume(closer, rem)
+	return nodes, rem
+}
 
-	if len(rem) == 0 {
-		panic(fmt.Sprintf("unclosed span: expected %s, got nil", closer))
+func consume(expected tag, annotations []*annotation) (annot *annotation, rem []*annotation) {
+	if len(annotations) == 0 {
+		panic(fmt.Sprintf("expected %s, got nil", expected))
+	} else if annotations[0].tag != expected {
+		panic(fmt.Sprintf("expected %s, got: %s", expected, annotations[0].tag))
+	} else {
+		return annotations[0], annotations[1:]
 	}
-
-	if rem[0].tag != closer {
-		panic(fmt.Sprintf("unclosed span: expected %s, got: %s", closer, rem[0].tag))
-	}
-
-	return nodes, rem[1:]
 }
