@@ -253,12 +253,15 @@ var matchRightBracket matcher = func(parser *inlineParser, start, end int) (pos 
 			textEndIndex := len(parser.annotations) - 2
 			destStartIndex := textEndIndex + 1
 
+			startAnnot := b.annot
+			textEndAnnot := parser.annotations[textEndIndex]
+			parser.invalidateOpenersBetween(startAnnot, textEndAnnot)
 			parser.openers[i] = openLinkish(
 				b.literal,
 				b.index,
-				b.annot, // "["
+				startAnnot, // "["
 				textEndIndex,
-				parser.annotations[textEndIndex], // "]"
+				textEndAnnot, // "]"
 				destStartIndex,
 				parser.annotations[destStartIndex], // "("
 			)
@@ -288,7 +291,6 @@ var matchRightParen matcher = func(parser *inlineParser, start, end int) (pos in
 		destEndIndex := len(parser.annotations)
 		destEndAnnot := parser.insertAnnotation(tagCloseDest, start, end)
 
-		parser.invalidateOpenersBetween(l.startAnnot, l.textEndAnnot)
 		parser.invalidateOpenersBetween(l.destStartAnnot, destEndAnnot)
 		parser.stringifyAnnotationsBetween(l.destStartIndex+1, destEndIndex)
 	}
