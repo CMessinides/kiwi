@@ -57,3 +57,23 @@ func TestParser(t *testing.T) {
 		}
 	}
 }
+
+func FuzzParser(f *testing.F) {
+	seeds := []string{
+		"Hello *world* [link](https://example.com)",
+		"## Heading\n\nThis is a _paragraph_.",
+		"- list\n- list\n  - nested list",
+	}
+
+	for _, s := range seeds {
+		f.Add(s)
+	}
+
+	f.Fuzz(func(t *testing.T, src string) {
+		r := strings.NewReader(src)
+		_, err := kwml.Parse(r)
+		if err != nil {
+			t.Errorf("parse failed: %s", err)
+		}
+	})
+}
