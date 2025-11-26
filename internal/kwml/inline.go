@@ -253,9 +253,14 @@ var matchRightBracket matcher = func(parser *inlineParser, start, end int) (pos 
 			textEndIndex := len(parser.annotations) - 2
 			destStartIndex := textEndIndex + 1
 
+			// Invalidate any openers between "[" and "](" -- even if this doesn't turn
+			// out to be a link, it avoids unexpected situations where, for example, an
+			// underscore in a URL creates an emphasis span opened by an underscore in
+			// the link text.
 			startAnnot := b.annot
 			textEndAnnot := parser.annotations[textEndIndex]
 			parser.invalidateOpenersBetween(startAnnot, textEndAnnot)
+
 			parser.openers[i] = openLinkish(
 				b.literal,
 				b.index,
