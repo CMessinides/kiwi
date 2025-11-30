@@ -1,0 +1,3 @@
+document
+	paragraph
+		wiki_link target="A wikilink"

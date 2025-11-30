@@ -235,13 +235,36 @@ var matchBacktick matcher = func(parser *inlineParser, start, end int) (pos int)
 }
 
 var matchLeftBracket matcher = func(parser *inlineParser, start, end int) (pos int) {
+	nextChar, size := utf8.DecodeRune(parser.raw[end:])
+	if nextChar == '[' {
+		end += size
+	}
+
 	index := len(parser.annotations)
-	annot := parser.insertAnnotation(tagStr, start, end)
-	parser.pushOpener(openBalanced("[", index, annot))
+	annot := parser.insertAnnotation(tagStr, start, end) // "[" or "[["
+	literal := string(parser.raw[start:end])
+	parser.pushOpener(openBalanced(literal, index, annot))
 	return end
 }
 
 var matchRightBracket matcher = func(parser *inlineParser, start, end int) (pos int) {
+	// Check if this is the first character of a "]]" pair.
+	nextChar, size := utf8.DecodeRune(parser.raw[end:])
+	if nextChar == ']' {
+		end += size
+		endIndex := len(parser.annotations)
+		closer := parser.insertAnnotation(tagStr, start, end) // "]]"
+
+		if i, b := parser.matchBalancedOpener("[["); b != nil {
+			b.annot.tag = tagOpenWikiLink
+			closer.tag = tagCloseWikiLink
+			parser.invalidateOpenersBetween(b.annot, closer)
+			parser.stringifyAnnotationsBetween(i+1, endIndex)
+		}
+
+		return end
+	}
+
 	parser.insertAnnotation(tagStr, start, end) // "]"
 	if i, b := parser.matchBalancedOpener("["); b != nil {
 		nextChar, size := utf8.DecodeRune(parser.raw[end:])
@@ -474,7 +497,11 @@ func toNodes(raw []byte, annotations []*annotation) (nodes []InlineNode, rem []*
 			var link *Link
 			link, rem = toLink(raw, rem[1:])
 			nodes = append(nodes, link)
-		case tagCloseEmph, tagCloseStrong, tagCloseCode, tagCloseLinkText:
+		case tagOpenWikiLink:
+			var link *WikiLink
+			link, rem = toWikiLink(raw, rem)
+			nodes = append(nodes, link)
+		case tagCloseEmph, tagCloseStrong, tagCloseCode, tagCloseLinkText, tagCloseWikiLink:
 			return nodes, rem
 		default:
 			panic(fmt.Sprintf("unexpected annotation: %s", rem[0].tag))
@@ -518,6 +545,19 @@ func toEmphasis(raw []byte, annotations []*annotation) (emph *Emphasis, rem []*a
 func toStrong(raw []byte, annotations []*annotation) (emph *StrongEmphasis, rem []*annotation) {
 	children, rem := toNodesUntil(tagCloseStrong, raw, annotations)
 	return &StrongEmphasis{Children: children}, rem
+}
+
+func toWikiLink(raw []byte, annotations []*annotation) (link *WikiLink, rem []*annotation) {
+	start, end := annotations[0].end, annotations[0].end
+	for i, annot := range annotations {
+		if annot.tag != tagCloseWikiLink {
+			end = annot.end
+		} else {
+			return &WikiLink{Target: string(raw[start:end])}, annotations[i+1:]
+		}
+	}
+
+	panic(fmt.Sprintf("unclosed wiki link: expected %s, got nil", tagCloseWikiLink))
 }
 
 func toLink(raw []byte, annotations []*annotation) (link *Link, rem []*annotation) {
