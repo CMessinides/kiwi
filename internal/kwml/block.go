@@ -14,8 +14,8 @@ var (
 	// /x60 = literal backtick
 	reRawOpener              = regexp.MustCompile(`^\s*(\x60{3,})(@\w+|\w*)\s*$`)
 	reBlockquoteOpener       = regexp.MustCompile(`^\s*("{3,})\s*$`)
-	reOrderedListItemPrefix  = regexp.MustCompile(`^\s*\+\s`)
-	reUnorderdListItemPrefix = regexp.MustCompile(`^\s*-\s`)
+	reOrderedListItemPrefix  = regexp.MustCompile(`^ *\+\s`)
+	reUnorderdListItemPrefix = regexp.MustCompile(`^ *-\s`)
 )
 
 // findText returns all the characters between the first non-whitespace and
