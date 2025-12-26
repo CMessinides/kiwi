@@ -341,7 +341,7 @@ type blockParser struct {
 func (b *blockParser) parse() (doc *Document, err error) {
 	for b.scanner.Scan() {
 		if err := b.scanner.Err(); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to scan input: %w", err)
 		}
 
 		line := b.scanner.Bytes()
