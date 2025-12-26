@@ -1,0 +1,13 @@
+document
+	paragraph
+		text content="*"
+		text content="Not emphasis"
+		text content="*"
+	paragraph
+		text content="["
+		text content="Not a link"
+		text content="]"
+		text content="()"
+	paragraph
+		text content="-"
+		text content=" Not a list"

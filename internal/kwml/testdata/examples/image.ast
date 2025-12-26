@@ -1,0 +1,6 @@
+document
+	paragraph
+		image target="example.jpg"
+			text content="An image"
+	paragraph
+		image target="empty alt"

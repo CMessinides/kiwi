@@ -216,6 +216,11 @@ type (
 	WikiLink struct {
 		Target string
 	}
+
+	Image struct {
+		Target   string
+		Children []InlineNode
+	}
 )
 
 // Implement [InlineNode] for all concrete inline types.
@@ -225,12 +230,14 @@ func (s *StrongEmphasis) inlineNode() {}
 func (c *Code) inlineNode()           {}
 func (l *Link) inlineNode()           {}
 func (w *WikiLink) inlineNode()       {}
+func (i *Image) inlineNode()          {}
 
 // Implement [InlineContainer] for inline nodes with inline children.
 
 func (e *Emphasis) Inlines() iter.Seq[InlineNode]       { return slices.Values(e.Children) }
 func (s *StrongEmphasis) Inlines() iter.Seq[InlineNode] { return slices.Values(s.Children) }
 func (l *Link) Inlines() iter.Seq[InlineNode]           { return slices.Values(l.Children) }
+func (i *Image) Inlines() iter.Seq[InlineNode]          { return slices.Values(i.Children) }
 
 // Implement [inlineContainer] for inline nodes with children.
 
@@ -244,6 +251,10 @@ func (s *StrongEmphasis) replaceInlines(nodes []InlineNode) {
 
 func (l *Link) replaceInlines(nodes []InlineNode) {
 	l.Children = nodes
+}
+
+func (i *Image) replaceInlines(nodes []InlineNode) {
+	i.Children = nodes
 }
 
 // Implement [lineWriter] for text nodes.

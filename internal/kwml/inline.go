@@ -12,12 +12,14 @@ type tag int
 
 const (
 	tagStr tag = iota
+	tagEscape
 	tagOpenEmph
 	tagCloseEmph
 	tagOpenStrong
 	tagCloseStrong
 	tagOpenCode
 	tagCloseCode
+	tagImageMarker
 	tagOpenImageText
 	tagCloseImageText
 	tagOpenLinkText
@@ -32,6 +34,8 @@ func (t tag) String() string {
 	switch t {
 	case tagStr:
 		return "str"
+	case tagEscape:
+		return "escape"
 	case tagOpenEmph:
 		return "open_emph"
 	case tagCloseEmph:
@@ -44,6 +48,8 @@ func (t tag) String() string {
 		return "open_code"
 	case tagCloseCode:
 		return "close_code"
+	case tagImageMarker:
+		return "image_marker"
 	case tagOpenImageText:
 		return "open_image_text"
 	case tagCloseImageText:
@@ -68,6 +74,10 @@ func (t tag) String() string {
 type annotation struct {
 	tag        tag
 	start, end int
+}
+
+func (a *annotation) Len() int {
+	return a.end - a.start
 }
 
 func newAnnotation(tag tag, start int, end int) *annotation {
@@ -161,7 +171,7 @@ type inlineParser struct {
 }
 
 var (
-	reSpecialChar      = regexp.MustCompile(`[*_()![\]\x60\n]`)
+	reSpecialChar      = regexp.MustCompile(`[*_()![\]\x60\n\\]`)
 	reBackticks        = regexp.MustCompile(`\x60+`)
 	reLeadingBackticks = regexp.MustCompile(`^\x60+`)
 )
@@ -203,6 +213,11 @@ var (
 	matchStar       = emphasisMatcher("*", tagOpenStrong, tagCloseStrong)
 )
 
+var matchBang matcher = func(parser *inlineParser, start, end int) (pos int) {
+	parser.insertAnnotation(tagStr, start, end)
+	return end
+}
+
 var matchBacktick matcher = func(parser *inlineParser, start, end int) (pos int) {
 	backticks := reLeadingBackticks.FindIndex(parser.raw[start:])
 	count := backticks[1] - backticks[0]
@@ -235,8 +250,7 @@ var matchBacktick matcher = func(parser *inlineParser, start, end int) (pos int)
 }
 
 var matchLeftBracket matcher = func(parser *inlineParser, start, end int) (pos int) {
-	nextChar, size := utf8.DecodeRune(parser.raw[end:])
-	if nextChar == '[' {
+	if nextChar, size := utf8.DecodeRune(parser.raw[end:]); nextChar == '[' {
 		end += size
 	}
 
@@ -313,8 +327,26 @@ var matchRightParen matcher = func(parser *inlineParser, start, end int) (pos in
 		b.deactivate()
 		parser.insertAnnotation(tagStr, start, end)
 	} else if _, l := parser.matchLinkishOpener(); l != nil {
-		l.startAnnot.tag = tagOpenLinkText
-		l.textEndAnnot.tag = tagCloseLinkText
+		var image bool
+		i := l.startIndex - 1
+		if i >= 0 {
+			prev := parser.annotations[i]
+			if prev.tag == tagStr && prev.Len() == 1 && string(parser.raw[prev.start:prev.end]) == "!" {
+				if i == 0 || parser.annotations[i-1].tag != tagEscape {
+					prev.tag = tagImageMarker
+					image = true
+				}
+			}
+		}
+
+		l.deactivate()
+		if image {
+			l.startAnnot.tag = tagOpenImageText
+			l.textEndAnnot.tag = tagCloseImageText
+		} else {
+			l.startAnnot.tag = tagOpenLinkText
+			l.textEndAnnot.tag = tagCloseLinkText
+		}
 		l.destStartAnnot.tag = tagOpenDest
 		destEndIndex := len(parser.annotations)
 		destEndAnnot := parser.insertAnnotation(tagCloseDest, start, end)
@@ -326,14 +358,16 @@ var matchRightParen matcher = func(parser *inlineParser, start, end int) (pos in
 	return end
 }
 
-var matchers = map[string]matcher{
-	"_": matchUnderscore,
-	"*": matchStar,
-	"`": matchBacktick,
-	"[": matchLeftBracket,
-	"]": matchRightBracket,
-	"(": matchLeftParen,
-	")": matchRightParen,
+var matchBackslash matcher = func(parser *inlineParser, start, end int) (pos int) {
+	tag := tagStr
+	nextChar, size := utf8.DecodeRune(parser.raw[end:])
+	if canBackslashEscape(nextChar) {
+		end += size
+		tag = tagEscape
+	}
+
+	parser.insertAnnotation(tag, start, end)
+	return end
 }
 
 func (i *inlineParser) parse(text []byte) {
@@ -366,9 +400,26 @@ func (i *inlineParser) parse(text []byte) {
 			pos = start
 		}
 
-		if matcher, ok := matchers[string(i.raw[start:end])]; ok {
-			pos = matcher(i, start, end)
-		} else {
+		switch string(i.raw[start:end]) {
+		case "\\":
+			pos = matchBackslash(i, start, end)
+		case "!":
+			pos = matchBang(i, start, end)
+		case "_":
+			pos = matchUnderscore(i, start, end)
+		case "*":
+			pos = matchStar(i, start, end)
+		case "`":
+			pos = matchBacktick(i, start, end)
+		case "[":
+			pos = matchLeftBracket(i, start, end)
+		case "]":
+			pos = matchRightBracket(i, start, end)
+		case "(":
+			pos = matchLeftParen(i, start, end)
+		case ")":
+			pos = matchRightParen(i, start, end)
+		default:
 			i.insertAnnotation(tagStr, start, end)
 			pos = end
 		}
@@ -481,6 +532,13 @@ func toNodes(raw []byte, annotations []*annotation) (nodes []InlineNode, rem []*
 			var txt *Text
 			txt, rem = toText(raw, rem)
 			nodes = append(nodes, txt)
+		case tagEscape:
+			txt := &Text{
+				// Skip the leading "\"
+				Content: raw[rem[0].start+1 : rem[0].end],
+			}
+			rem = rem[1:]
+			nodes = append(nodes, txt)
 		case tagOpenEmph:
 			var emph *Emphasis
 			emph, rem = toEmphasis(raw, rem[1:])
@@ -493,6 +551,10 @@ func toNodes(raw []byte, annotations []*annotation) (nodes []InlineNode, rem []*
 			var code *Code
 			code, rem = toCode(raw, rem)
 			nodes = append(nodes, code)
+		case tagImageMarker:
+			var img *Image
+			img, rem = toImage(raw, rem[1:])
+			nodes = append(nodes, img)
 		case tagOpenLinkText:
 			var link *Link
 			link, rem = toLink(raw, rem[1:])
@@ -501,7 +563,7 @@ func toNodes(raw []byte, annotations []*annotation) (nodes []InlineNode, rem []*
 			var link *WikiLink
 			link, rem = toWikiLink(raw, rem)
 			nodes = append(nodes, link)
-		case tagCloseEmph, tagCloseStrong, tagCloseCode, tagCloseLinkText, tagCloseWikiLink:
+		case tagCloseEmph, tagCloseStrong, tagCloseCode, tagCloseLinkText, tagCloseImageText, tagCloseWikiLink:
 			return nodes, rem
 		default:
 			panic(fmt.Sprintf("unexpected annotation: %s", rem[0].tag))
@@ -558,6 +620,31 @@ func toWikiLink(raw []byte, annotations []*annotation) (link *WikiLink, rem []*a
 	}
 
 	panic(fmt.Sprintf("unclosed wiki link: expected %s, got nil", tagCloseWikiLink))
+}
+
+func toImage(raw []byte, annotations []*annotation) (img *Image, rem []*annotation) {
+	_, rem = consume(tagOpenImageText, annotations)
+
+	var (
+		children  []InlineNode
+		destStart *annotation
+	)
+	children, rem = toNodesUntil(tagCloseImageText, raw, rem)
+	destStart, rem = consume(tagOpenDest, rem)
+
+	targetStart, targetEnd := destStart.end, destStart.end
+	for i, annot := range rem {
+		if annot.tag != tagCloseDest {
+			targetEnd = annot.end
+		} else {
+			return &Image{
+				Children: children,
+				Target:   string(raw[targetStart:targetEnd]),
+			}, rem[i+1:]
+		}
+	}
+
+	panic(fmt.Sprintf("unclosed link target: expected %s, got nil", tagCloseDest))
 }
 
 func toLink(raw []byte, annotations []*annotation) (link *Link, rem []*annotation) {

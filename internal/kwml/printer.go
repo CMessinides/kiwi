@@ -52,6 +52,8 @@ func (p *printer) StartVisit(node Node) (v Visitor) {
 		p.printNode("strong_emphasis")
 	case *Code:
 		p.printNode("code", "raw", string(v.Raw))
+	case *Image:
+		p.printNode("image", "target", v.Target)
 	case *Link:
 		p.printNode("link", "target", v.Target)
 	case *WikiLink:
