@@ -269,11 +269,12 @@ var matchRightBracket matcher = func(parser *inlineParser, start, end int) (pos 
 		endIndex := len(parser.annotations)
 		closer := parser.insertAnnotation(tagStr, start, end) // "]]"
 
-		if i, b := parser.matchBalancedOpener("[["); b != nil {
+		if _, b := parser.matchBalancedOpener("[["); b != nil {
+			b.deactivate()
 			b.annot.tag = tagOpenWikiLink
 			closer.tag = tagCloseWikiLink
 			parser.invalidateOpenersBetween(b.annot, closer)
-			parser.stringifyAnnotationsBetween(i+1, endIndex)
+			parser.stringifyAnnotationsBetween(b.index+1, endIndex)
 		}
 
 		return end
